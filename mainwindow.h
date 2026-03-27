@@ -2,27 +2,17 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QStackedWidget>
-#include <QWidget>
 #include <QTimer>
-#include <QPainter>
 #include <QVector>
 #include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QProgressDialog>
-#include <QPropertyAnimation>
-#include <QParallelAnimationGroup>
-#include <QGraphicsOpacityEffect>
-#include <QGraphicsDropShadowEffect>
-#include <QLabel>
-#include <QPushButton>
-#include <QVBoxLayout>
-#include <QSqlDatabase>
-#include <QCamera>
-#include <QMediaCaptureSession>
-#include <QImageCapture>
-#include <QMediaDevices>
 #include <functional>
+#include "student.h"
+
+class QPaintEvent;
+class QPainter;
+class QWidget;
+class QLabel;
+class QProgressDialog;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -58,9 +48,7 @@ private:
     QTimer *animTimer;
     QVector<AnimCar> cars;
     QNetworkAccessManager *networkManager;
-    QSqlDatabase m_db;
-    QString m_lastDbError;
-    QString m_dbSchema;
+    QVector<Student> m_students;
 
     void initCars();
     void drawCar(QPainter &p, const AnimCar &car);
@@ -80,8 +68,6 @@ private:
 
     // UI animation helpers
     void showToast(const QString &message, bool isError = true);
-    void showError(QLabel *label, const QString &message);
-    void hideError(QLabel *label);
     void shakeWidget(QWidget *w);
     void showWidget(QWidget *w);
     void showSuccess(const QString &title, const QString &message);
@@ -91,17 +77,10 @@ private:
                            const QString &frameResource,
                            std::function<void(const QString &savedPath)> callback);
 
-    // Field extraction helpers
-    static QString extractAfterLabel(const QStringList &lines, const QStringList &labels);
-    static QString extractMultiLineValue(const QStringList &lines, int labelIndex,
-                                         const QStringList &allLabels);
-
-    // Database helpers
-    bool setupDatabase();
+    // Local in-memory storage helpers
     bool insertStudentFromForm(QString *errorMessage);
     bool verifyStudentCredentials(const QString &email, const QString &password, QString *fullName);
     QString hashPassword(const QString &password) const;
-    QString qualifiedTableName(const QString &table) const;
     void clearRegistrationForm();
 
 private slots:

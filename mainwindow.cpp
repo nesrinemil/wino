@@ -1,15 +1,14 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include "student.h"
-#include <QFileDialog>
-#include <QPainterPath>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QMessageBox>
 #include <QProgressDialog>
 #include <QApplication>
+#include <QPainter>
+#include <QPainterPath>
 #include <QNetworkRequest>
+#include <QNetworkReply>
 #include <QFile>
 #include <QRegularExpression>
 #include <QDate>
@@ -23,7 +22,6 @@
 #include <QVideoSink>
 #include <QVideoFrame>
 #include <QSvgRenderer>
-#include <QFile>
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -33,9 +31,6 @@
 #include <QMediaDevices>
 #include <QStandardPaths>
 #include <QUuid>
-#include <QSqlError>
-#include <QSqlQuery>
-#include <QSqlRecord>
 #include <QCryptographicHash>
 #include <QtMath>
 #include <algorithm>
@@ -60,13 +55,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Initialize network manager for API calls
     networkManager = new QNetworkAccessManager(this);
-
-    if (!setupDatabase()) {
-        const QString detail = m_lastDbError.isEmpty()
-            ? QStringLiteral("Unknown database connection error")
-            : m_lastDbError;
-        showToast("Database is not connected: " + detail);
-    }
 
     // ── Login page (index 0) ──
     connect(ui->btnSignIn, &QPushButton::clicked, this, [this]() {
@@ -374,182 +362,67 @@ void MainWindow::goToStep(int step)
         ui->stackedWidget->setCurrentIndex(step);
 }
 
-bool MainWindow::setupDatabase()
-{
-    m_lastDbError.clear();
-    m_dbSchema.clear();
-
-    const QString host = qEnvironmentVariable("DRIVING_DB_HOST", "127.0.0.1");
-    const QString port = qEnvironmentVariable("DRIVING_DB_PORT", "3306");
-    const QString dbName = qEnvironmentVariable("DRIVING_DB_NAME", "drivingschool");
-    const QString user = qEnvironmentVariable("DRIVING_DB_USER", "drivingschool");
-    const QString pass = qEnvironmentVariable("DRIVING_DB_PASSWORD", "drivingschool");
-    m_dbSchema = qEnvironmentVariable("DRIVING_DB_SCHEMA").trimmed();
-
-    if (user.isEmpty() || pass.isEmpty()) {
-        m_lastDbError = "Missing database credentials (DRIVING_DB_USER / DRIVING_DB_PASSWORD).";
-        return false;
-    }
-
-    const QStringList drivers = QSqlDatabase::drivers();
-    const bool hasQmysql = drivers.contains("QMYSQL");
-    const bool hasQodbc = drivers.contains("QODBC");
-
-    if (!hasQmysql && !hasQodbc) {
-        m_lastDbError = "No Qt SQL driver found for MySQL. Install/enable QMYSQL (or use QODBC fallback).";
-        return false;
-    }
-
-    if (hasQmysql) {
-        const QString connectionName = "driving_mysql_connection";
-        if (QSqlDatabase::contains(connectionName)) {
-            m_db = QSqlDatabase::database(connectionName);
-        } else {
-            m_db = QSqlDatabase::addDatabase("QMYSQL", connectionName);
-        }
-
-        if (!m_db.isValid()) {
-            m_lastDbError = "QMYSQL connection is invalid.";
-        } else {
-            m_db.setHostName(host);
-            m_db.setPort(port.toInt());
-            m_db.setDatabaseName(dbName);
-            m_db.setUserName(user);
-            m_db.setPassword(pass);
-            if (m_db.open()) {
-                return true;
-            }
-            m_lastDbError = "QMYSQL open failed: " + m_db.lastError().text();
-        }
-    }
-
-    if (!hasQodbc) {
-        return false;
-    }
-
-    const QString connectionName = "driving_mysql_connection_qodbc";
-    if (QSqlDatabase::contains(connectionName)) {
-        m_db = QSqlDatabase::database(connectionName);
-    } else {
-        m_db = QSqlDatabase::addDatabase("QODBC", connectionName);
-    }
-
-    if (!m_db.isValid()) {
-        m_lastDbError = "QODBC connection is invalid.";
-        return false;
-    }
-
-    const QString dsn = qEnvironmentVariable("DRIVING_DB_DSN", "");
-    const QString explicitDriver = qEnvironmentVariable("DRIVING_ODBC_DRIVER");
-
-    QStringList connectionAttempts;
-    QStringList attemptLabels;
-
-    if (!dsn.isEmpty()) {
-        connectionAttempts << QString("DSN=%1;UID=%2;PWD=%3;DATABASE=%4;").arg(dsn, user, pass, dbName);
-        attemptLabels << QString("DSN '%1'").arg(dsn);
-    }
-
-    QStringList driverCandidates;
-    if (!explicitDriver.isEmpty()) {
-        driverCandidates << explicitDriver;
-    }
-    driverCandidates << QStringLiteral("MySQL ODBC 8.0 Unicode Driver")
-                     << QStringLiteral("MySQL ODBC 8.0 ANSI Driver")
-                     << QStringLiteral("MySQL ODBC 9.0 Unicode Driver")
-                     << QStringLiteral("MariaDB ODBC 3.1 Driver");
-    driverCandidates.removeDuplicates();
-
-    for (const QString &driverName : driverCandidates) {
-        connectionAttempts << QString("DRIVER={%1};SERVER=%2;PORT=%3;DATABASE=%4;UID=%5;PWD=%6;")
-                                  .arg(driverName, host, port, dbName, user, pass);
-        attemptLabels << QString("driver '%1' with database").arg(driverName);
-
-        connectionAttempts << QString("DRIVER={%1};SERVER=%2;PORT=%3;UID=%4;PWD=%5;")
-                                  .arg(driverName, host, port, user, pass);
-        attemptLabels << QString("driver '%1' without database").arg(driverName);
-    }
-
-    QStringList errors;
-    for (int i = 0; i < connectionAttempts.size(); ++i) {
-        m_db.setDatabaseName(connectionAttempts[i]);
-        if (m_db.open()) {
-            return true;
-        }
-        errors << (attemptLabels[i] + " -> " + m_db.lastError().text());
-    }
-
-    m_lastDbError = "QODBC open failed. Attempts: " + errors.join(" | ");
-
-    return false;
-}
-
 QString MainWindow::hashPassword(const QString &password) const
 {
     const QByteArray digest = QCryptographicHash::hash(password.toUtf8(), QCryptographicHash::Sha256);
     return QString::fromLatin1(digest.toHex());
 }
 
-QString MainWindow::qualifiedTableName(const QString &table) const
-{
-    if (m_dbSchema.isEmpty()) {
-        return table;
-    }
-    return m_dbSchema + "." + table;
-}
-
 bool MainWindow::verifyStudentCredentials(const QString &email, const QString &password, QString *fullName)
 {
-    if (!m_db.isOpen() && !setupDatabase()) {
-        return false;
+    const QString emailNormalized = email.trimmed();
+    const QString passwordDigest = hashPassword(password);
+
+    for (const Student &student : m_students) {
+        if (student.studentStatus().compare("ACTIVE", Qt::CaseInsensitive) == 0
+            && student.email().compare(emailNormalized, Qt::CaseInsensitive) == 0
+            && student.passwordHash() == passwordDigest) {
+            if (fullName) {
+                *fullName = student.fullName();
+            }
+            return true;
+        }
     }
 
-    const QString studentsTable = qualifiedTableName("STUDENTS");
-
-    QSqlQuery query(m_db);
-    query.prepare(
-        "SELECT first_name, last_name "
-        "FROM " + studentsTable + " "
-        "WHERE email = :email AND password_hash = :password_hash AND student_status = 'ACTIVE'");
-    query.bindValue(":email", email);
-    query.bindValue(":password_hash", hashPassword(password));
-
-    if (!query.exec()) {
-        m_lastDbError = query.lastError().text();
-        return false;
-    }
-
-    if (!query.next()) {
-        m_lastDbError.clear();
-        return false;
-    }
-
-    if (fullName) {
-        *fullName = query.value(0).toString() + " " + query.value(1).toString();
-    }
-
-    return true;
+    return false;
 }
 
 bool MainWindow::insertStudentFromForm(QString *errorMessage)
 {
-    if (!m_db.isOpen() && !setupDatabase()) {
+    const QString email = ui->editEmail->text().trimmed();
+    if (email.isEmpty()) {
         if (errorMessage) {
-            *errorMessage = m_lastDbError.isEmpty()
-                ? QStringLiteral("Database connection is not available")
-                : m_lastDbError;
+            *errorMessage = QStringLiteral("Email is required.");
         }
         return false;
     }
 
+    const QString password = ui->editPassword->text();
+    if (password.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Password is required.");
+        }
+        return false;
+    }
+
+    for (const Student &existing : m_students) {
+        if (existing.email().compare(email, Qt::CaseInsensitive) == 0) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("An account with this email already exists.");
+            }
+            return false;
+        }
+    }
+
     Student student;
+    student.setId(m_students.size() + 1);
     student.setFirstName(ui->editFirstName->text().trimmed());
     student.setLastName(ui->editLastName->text().trimmed());
     student.setDateOfBirth(ui->editDOB->date());
     student.setPhone(ui->editPhone->text().trimmed());
     student.setCin(ui->editCIN->text().trimmed());
-    student.setEmail(ui->editEmail->text().trimmed());
-    student.setPasswordHash(hashPassword(ui->editPassword->text()));
+    student.setEmail(email);
+    student.setPasswordHash(hashPassword(password));
     student.setHasCin(ui->chkCIN->isChecked());
     student.setHasFacePhoto(ui->chkPhoto->isChecked());
     student.setMedicalCertificatePath(QString());
@@ -562,63 +435,7 @@ bool MainWindow::insertStudentFromForm(QString *errorMessage)
     student.setFingerprintRegistered(m_fingerprintDone);
     student.setStudentStatus("ACTIVE");
 
-    const QString studentsTable = qualifiedTableName("STUDENTS");
-    const QString schoolsTable = qualifiedTableName("DRIVING_SCHOOLS");
-
-    QSqlQuery query(m_db);
-    query.prepare(
-        "INSERT INTO " + studentsTable + " ("
-        "driving_school_id, first_name, last_name, date_of_birth, phone, cin, email, password_hash, "
-        "has_cin, has_face_photo, medical_certificate_path, is_beginner, has_driving_license, "
-        "has_code, has_conduite, course_level, fingerprint_registered, student_status"
-        ") VALUES ("
-        "(SELECT MIN(id) FROM " + schoolsTable + "), :first_name, :last_name, :date_of_birth, :phone, :cin, :email, :password_hash, "
-        ":has_cin, :has_face_photo, :medical_certificate_path, :is_beginner, :has_driving_license, "
-        ":has_code, :has_conduite, :course_level, :fingerprint_registered, :student_status"
-        ")");
-
-    query.bindValue(":first_name", student.firstName());
-    query.bindValue(":last_name", student.lastName());
-    query.bindValue(":date_of_birth", student.dateOfBirth());
-    query.bindValue(":phone", student.phone());
-    query.bindValue(":cin", student.cin());
-    query.bindValue(":email", student.email());
-    query.bindValue(":password_hash", student.passwordHash());
-    query.bindValue(":has_cin", student.hasCin() ? 1 : 0);
-    query.bindValue(":has_face_photo", student.hasFacePhoto() ? 1 : 0);
-    query.bindValue(":medical_certificate_path", student.medicalCertificatePath());
-    query.bindValue(":is_beginner", student.isBeginner() ? 1 : 0);
-    query.bindValue(":has_driving_license", student.hasDrivingLicense() ? 1 : 0);
-    query.bindValue(":has_code", student.hasCode() ? 1 : 0);
-    query.bindValue(":has_conduite", student.hasConduite() ? 1 : 0);
-    query.bindValue(":course_level", student.courseLevel());
-    query.bindValue(":fingerprint_registered", student.fingerprintRegistered() ? 1 : 0);
-    query.bindValue(":student_status", student.studentStatus());
-
-    const bool ok = query.exec();
-
-    if (!ok) {
-        m_lastDbError = query.lastError().text();
-        if ((m_lastDbError.contains("cannot be null", Qt::CaseInsensitive) || m_lastDbError.contains("1048"))
-            && m_lastDbError.contains("DRIVING_SCHOOL_ID", Qt::CaseInsensitive)) {
-            m_lastDbError += " | Hint: DRIVING_SCHOOLS has no rows. Add at least one driving school row.";
-        }
-        if (m_lastDbError.contains("doesn't exist", Qt::CaseInsensitive)
-            || m_lastDbError.contains("1146")) {
-            const QString schemaHint = m_dbSchema.isEmpty() ? QStringLiteral("(unknown)") : m_dbSchema;
-            m_lastDbError += " | Hint: STUDENTS table was searched in schema '" + schemaHint +
-                             "'. Set DRIVING_DB_SCHEMA to your schema name, or create the tables in DRIVING_DB_NAME.";
-        } else if ((m_lastDbError.contains("foreign key constraint fails", Qt::CaseInsensitive)
-                    || m_lastDbError.contains("1452"))
-                   && m_lastDbError.contains("FK_STUDENTS_SCHOOL", Qt::CaseInsensitive)) {
-            m_lastDbError += " | Hint: DRIVING_SCHOOL_ID does not exist in DRIVING_SCHOOLS. "
-                             "Create parent rows or set DRIVING_SCHOOL_ID to an existing value.";
-        }
-        if (errorMessage) {
-            *errorMessage = m_lastDbError;
-        }
-        return false;
-    }
+    m_students.append(student);
 
     return true;
 }
@@ -1060,6 +877,11 @@ void MainWindow::sendOcrRequest(const QString &imagePath, const QString &prompt,
                                  std::function<void(const QString &text)> callback,
                                  QProgressDialog *progress)
 {
+    if (HF_TOKEN.trimmed().isEmpty()) {
+        callback("ERROR:Missing HF_TOKEN environment variable.");
+        return;
+    }
+
     QString imageUri = imageToBase64Uri(imagePath);
     if (imageUri.isEmpty()) {
         callback("ERROR:Could not read image file: " + imagePath);
@@ -1394,57 +1216,6 @@ void MainWindow::showToast(const QString &message, bool isError)
                          toast, &QLabel::deleteLater);
         fade->start(QAbstractAnimation::DeleteWhenStopped);
     });
-}
-
-// Slide-down + fade-in an error label
-void MainWindow::showError(QLabel *label, const QString &message)
-{
-    label->setText(message);
-    label->setMaximumHeight(0);
-    label->setVisible(true);
-
-    auto *eff = qobject_cast<QGraphicsOpacityEffect*>(label->graphicsEffect());
-    if (!eff) {
-        eff = new QGraphicsOpacityEffect(label);
-        label->setGraphicsEffect(eff);
-    }
-    eff->setOpacity(0.0);
-
-    auto *hAnim = new QPropertyAnimation(label, "maximumHeight", label);
-    hAnim->setDuration(280);
-    hAnim->setStartValue(0);
-    hAnim->setEndValue(72);
-    hAnim->setEasingCurve(QEasingCurve::OutCubic);
-
-    auto *oAnim = new QPropertyAnimation(eff, "opacity", label);
-    oAnim->setDuration(280);
-    oAnim->setStartValue(0.0);
-    oAnim->setEndValue(1.0);
-    oAnim->setEasingCurve(QEasingCurve::OutCubic);
-
-    auto *grp = new QParallelAnimationGroup(label);
-    grp->addAnimation(hAnim);
-    grp->addAnimation(oAnim);
-    grp->start(QAbstractAnimation::DeleteWhenStopped);
-}
-
-// Fade-out then hide an error label
-void MainWindow::hideError(QLabel *label)
-{
-    if (!label->isVisible()) return;
-
-    auto *eff = qobject_cast<QGraphicsOpacityEffect*>(label->graphicsEffect());
-    if (!eff) { label->setVisible(false); return; }
-
-    auto *oAnim = new QPropertyAnimation(eff, "opacity", label);
-    oAnim->setDuration(160);
-    oAnim->setStartValue(eff->opacity());
-    oAnim->setEndValue(0.0);
-    connect(oAnim, &QPropertyAnimation::finished, label, [label]() {
-        label->setVisible(false);
-        label->setMaximumHeight(QWIDGETSIZE_MAX);
-    });
-    oAnim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 // Horizontal shake (invalid input feedback)
