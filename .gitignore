@@ -27,3 +27,5 @@ Makefile.Release
 # Local logs
 push_output.log
 push_exit.log
+push_try.log
+push_try_exit.log
