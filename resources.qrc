@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>assets/checkmark.svg</file>
+        <file>assets/radiodot.svg</file>
+        <file>assets/fingerprint.svg</file>
+        <file>assets/idcard.svg</file>
+        <file>assets/lock.svg</file>
+        <file>assets/frontcin.svg</file>
+        <file>assets/backcin.svg</file>
+        <file>assets/arrow-up.svg</file>
+        <file>assets/arrow-down.svg</file>
+    </qresource>
+</RCC>
