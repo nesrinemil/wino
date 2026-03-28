@@ -2,6 +2,8 @@
 #include "ui_instructordashboard.h"
 #include "mainwindow.h"
 #include "database.h"
+#include "C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool/circuitdashboard.h"
+#include "C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool/circuitdb.h"
 #include <QtWidgets>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -20,6 +22,38 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
 
     connect(ui->logoutButton, &QPushButton::clicked, this, &InstructorDashboard::onLogoutClicked);
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &InstructorDashboard::switchTab);
+
+    // ── Circuit Analysis tab ─────────────────────────────────────────────────
+    QPushButton *circuitBtn = new QPushButton("🚦  Open Circuit Analysis Dashboard");
+    circuitBtn->setFixedHeight(48);
+    circuitBtn->setCursor(Qt::PointingHandCursor);
+    circuitBtn->setStyleSheet(
+        "QPushButton { background:#14B8A6; color:white; border:none; border-radius:10px;"
+        "              font-size:15px; font-weight:700; margin:24px; }"
+        "QPushButton:hover { background:#0D9488; }");
+    QWidget *circuitTab = new QWidget();
+    QVBoxLayout *circuitLayout = new QVBoxLayout(circuitTab);
+    circuitLayout->addStretch();
+    circuitLayout->addWidget(circuitBtn, 0, Qt::AlignCenter);
+    circuitLayout->addStretch();
+    ui->tabWidget->addTab(circuitTab, "⚡ Circuit");
+
+    connect(circuitBtn, &QPushButton::clicked, this, [this]() {
+        if (!CircuitDB::instance()->isOpen()) {
+            OracleConnectionParams p;
+            p.drivingSchoolId = schoolId;
+            p.instructorId    = instructorId;
+            if (!CircuitDB::instance()->initialize(p)) {
+                QMessageBox::critical(this, "Circuit DB Error",
+                    CircuitDB::instance()->lastError());
+                return;
+            }
+        }
+        CircuitDashboard *cd = new CircuitDashboard();
+        cd->setAttribute(Qt::WA_DeleteOnClose);
+        cd->showMaximized();
+    });
+
     // loadData() is called by init() after login sets schoolId + instructorId
 }
 

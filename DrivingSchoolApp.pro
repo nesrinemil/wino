@@ -1,4 +1,4 @@
-QT += core gui sql network multimedia multimediawidgets svg
+QT += core gui sql network multimedia multimediawidgets svg printsupport
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -15,7 +15,8 @@ SOURCES += \
     instructordashboard.cpp \
     database.cpp \
     emailservice.cpp \
-    smartdrivewindow.cpp
+    smartdrivewindow.cpp \
+    studentlearninghub.cpp
 
 HEADERS += \
     mainwindow.h \
@@ -26,7 +27,8 @@ HEADERS += \
     instructordashboard.h \
     database.h \
     emailservice.h \
-    smartdrivewindow.h
+    smartdrivewindow.h \
+    studentlearninghub.h
 
 # ── TACHE learning module sources (shared, not copied) ───────────────────────
 SOURCES += \
@@ -57,6 +59,49 @@ HEADERS += \
 
 # Make TACHE headers findable by their short names
 INCLUDEPATH += ../9
+
+# ── Circuit (SmartDrivingSchool) sources ─────────────────────────────────────
+SDS = C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool
+
+SOURCES += \
+    $$SDS/circuitdb.cpp \
+    $$SDS/circuitdashboard.cpp \
+    $$SDS/csvreader.cpp \
+    $$SDS/dataprocessor.cpp \
+    $$SDS/recommendationengine.cpp \
+    $$SDS/mlpredictor.cpp \
+    $$SDS/sessioncomparisonwidget.cpp \
+    $$SDS/progresstrackingwidget.cpp \
+    $$SDS/pdfreportgenerator.cpp \
+    $$SDS/settingsdialog.cpp \
+    $$SDS/analyticsengine.cpp \
+    $$SDS/studentmanagerdialog.cpp \
+    $$SDS/studenthistorywidget.cpp \
+    $$SDS/loginwindow.cpp \
+    $$SDS/studentportal.cpp \
+    $$SDS/qcustomplot.cpp
+
+HEADERS += \
+    $$SDS/circuitdb.h \
+    $$SDS/circuitdashboard.h \
+    $$SDS/csvreader.h \
+    $$SDS/dataprocessor.h \
+    $$SDS/recommendationengine.h \
+    $$SDS/mlpredictor.h \
+    $$SDS/sessioncomparisonwidget.h \
+    $$SDS/progresstrackingwidget.h \
+    $$SDS/pdfreportgenerator.h \
+    $$SDS/settingsdialog.h \
+    $$SDS/analyticsengine.h \
+    $$SDS/studentmanagerdialog.h \
+    $$SDS/studenthistorywidget.h \
+    $$SDS/loginwindow.h \
+    $$SDS/studentportal.h \
+    $$SDS/qcustomplot.h
+
+FORMS += $$SDS/circuitdashboard.ui
+
+INCLUDEPATH += $$SDS
 
 FORMS += \
     mainwindow.ui \

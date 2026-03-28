@@ -45,7 +45,7 @@
 #include <ctime>
 #include <cmath>
 #include <functional>
-#include "smartdrivewindow.h"
+#include "studentlearninghub.h"
 
 // ── Hugging Face API configuration ──
 static const QString HF_TOKEN = qEnvironmentVariable("HF_TOKEN");
@@ -479,9 +479,9 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 
             // ── APPROVED → open SmartDrive learning module (integrated) ──
             if (reqStatus == "approved") {
-                SmartDriveWindow *sdw = new SmartDriveWindow(id);
-                sdw->setAttribute(Qt::WA_DeleteOnClose);
-                sdw->showMaximized();
+                StudentLearningHub *hub = new StudentLearningHub(id);
+                hub->setAttribute(Qt::WA_DeleteOnClose);
+                hub->showMaximized();
                 this->hide();
                 return true;
             }
