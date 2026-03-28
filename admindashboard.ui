@@ -1,0 +1,483 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AdminDashboard</class>
+ <widget class="QMainWindow" name="AdminDashboard">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1200</width>
+    <height>800</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Admin Dashboard</string>
+  </property>
+  <property name="styleSheet">
+   <string>QMainWindow {
+    background-color: #F3F4F6;
+}
+
+#headerWidget {
+    background-color: #14B8A6;
+}
+
+#headerTitle {
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+#headerSubtitle {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+}
+
+#logoutButton {
+    background-color: transparent;
+    color: white;
+    border: 2px solid white;
+    border-radius: 5px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#logoutButton:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+#pageTitle {
+    color: #1F1827;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+#adminBadge {
+    background-color: #14B8A6;
+    color: white;
+    border-radius: 5px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.statCard {
+    background-color: white;
+    border-radius: 10px;
+    padding: 15px;
+}
+
+.statLabel {
+    color: #6B7280;
+    font-size: 13px;
+}
+
+.statCount {
+    color: #1F1827;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.filterButton {
+    background-color: #E5E7EB;
+    color: #6B7280;
+    border: none;
+    border-radius: 5px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.filterButton:hover {
+    background-color: #D1D5DB;
+}
+
+#scrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: #F3F4F6;
+    width: 10px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical {
+    background: #CBD5E0;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #A0AEC0;
+}</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <widget class="QWidget" name="headerWidget" native="true">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>70</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>70</height>
+       </size>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <property name="leftMargin"><number>25</number></property>
+       <property name="rightMargin"><number>25</number></property>
+       <item>
+        <widget class="QLabel" name="headerTitle">
+         <property name="text">
+          <string>Wino - Module 2</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="headerSubtitle">
+         <property name="text">
+          <string>Administrator Panel</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QPushButton" name="logoutButton">
+         <property name="text">
+          <string>Logout</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QWidget" name="contentWidget" native="true">
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <property name="spacing">
+        <number>20</number>
+       </property>
+       <property name="leftMargin">
+        <number>30</number>
+       </property>
+       <property name="topMargin">
+        <number>30</number>
+       </property>
+       <property name="rightMargin">
+        <number>30</number>
+       </property>
+       <property name="bottomMargin">
+        <number>30</number>
+       </property>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_2">
+         <item>
+          <widget class="QLabel" name="pageTitle">
+           <property name="text">
+            <string>Driving Schools Management</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer_2">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QLabel" name="adminBadge">
+           <property name="text">
+            <string>Admin</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="statsLayout">
+         <property name="spacing">
+          <number>15</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="pendingCard">
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QFrame#pendingCard { background-color: white; border-radius: 12px; border: 1px solid #E5E7EB; padding: 5px; }</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">statCard</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_3">
+            <item>
+             <widget class="QLabel" name="pendingIconLabel">
+              <property name="text">
+               <string>📋</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-size: 24px;</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="pendingLabel">
+              <property name="text">
+               <string>Pending</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statLabel</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="pendingCountLabel">
+              <property name="text">
+               <string>0</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statCount</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="approvedCard">
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QFrame#approvedCard { background-color: white; border-radius: 12px; border: 1px solid #E5E7EB; padding: 5px; }</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">statCard</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_4">
+            <item>
+             <widget class="QLabel" name="approvedIconLabel">
+              <property name="text">
+               <string>✓</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-size: 24px; color: #10B981;</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="approvedLabel">
+              <property name="text">
+               <string>Active</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statLabel</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="approvedCountLabel">
+              <property name="text">
+               <string>0</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statCount</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="totalCard">
+           <property name="frameShape">
+            <enum>QFrame::NoFrame</enum>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QFrame#totalCard { background-color: white; border-radius: 12px; border: 1px solid #E5E7EB; padding: 5px; }</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">statCard</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_5">
+            <item>
+             <widget class="QLabel" name="totalIconLabel">
+              <property name="text">
+               <string>■</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-size: 24px; color: #14B8A6;</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="totalLabel">
+              <property name="text">
+               <string>Total</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statLabel</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="totalCountLabel">
+              <property name="text">
+               <string>0</string>
+              </property>
+              <property name="class" stdset="0">
+               <string notr="true">statCount</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="filterLayout">
+         <property name="spacing">
+          <number>10</number>
+         </property>
+         <item>
+          <widget class="QPushButton" name="allFilterButton">
+           <property name="text">
+            <string>All</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">filterButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pendingFilterButton">
+           <property name="text">
+            <string>Pending</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">filterButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="approvedFilterButton">
+           <property name="text">
+            <string>Active</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">filterButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="deactivatedFilterButton">
+           <property name="text">
+            <string>Suspended</string>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">filterButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer_3">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QPushButton" name="addSchoolButton">
+           <property name="text">
+            <string>+ Add School</string>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton { background-color: #14B8A6; color: white; border: none; border-radius: 5px; padding: 10px 20px; font-size: 13px; font-weight: bold; } QPushButton:hover { background-color: #0F9488; }</string>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>130</width>
+             <height>40</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QScrollArea" name="scrollArea">
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QScrollArea { background: transparent; border: none; } QWidget#schoolsContainer { background: transparent; }</string>
+         </property>
+         <widget class="QWidget" name="schoolsContainer">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>1120</width>
+            <height>485</height>
+           </rect>
+          </property>
+         </widget>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,1224 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>664</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Driving School</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">/* ═══ DRIVING SCHOOL — GLASSMORPHISM THEME ═══ */
+
+QMainWindow {
+  background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+    stop:0 #0d9488, stop:0.35 #14B8A6, stop:0.65 #2dd4c1, stop:1 #5eead4);
+}
+QWidget { font-family: &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif; font-size: 14px; color: #0f172a; }
+QStackedWidget &gt; QWidget { background: transparent; }
+
+/* ── Glass Cards ── */
+QGroupBox {
+  background: rgba(255,255,255,0.55); border: 1.5px solid rgba(255,255,255,0.80);
+  border-radius: 20px; padding: 24px 20px 20px 20px; margin-top: 12px;
+}
+QGroupBox::title {
+  subcontrol-origin: margin; left: 18px; padding: 3px 10px;
+  color: #0f766e; font-weight: 800; font-size: 15px;
+  background: rgba(255,255,255,0.70); border-radius: 8px;
+}
+QGroupBox#groupSignIn, QGroupBox#groupForgot {
+  background: rgba(255,255,255,0.60); border: 1.5px solid rgba(255,255,255,0.85); border-radius: 22px;
+}
+QGroupBox#groupMedical {
+  background: rgba(255,255,255,0.45); border: 1.5px dashed rgba(20,184,166,0.60);
+  border-radius: 14px; padding: 14px;
+}
+QGroupBox#groupRequiredDocs {
+  background: rgba(240,253,249,0.70); border: 1.5px dashed rgba(20,184,166,0.70);
+  border-radius: 12px; padding: 14px; margin-top: 8px;
+}
+QGroupBox#groupRequiredDocs::title { color: #0d9488; font-weight: 800; font-size: 14px; }
+QGroupBox#groupStep3Content { background: transparent; border: none; padding: 0; margin: 0; }
+QGroupBox#groupDocs, QGroupBox#groupCourse {
+  background: rgba(255,255,255,0.55); border: 1.5px solid rgba(255,255,255,0.80);
+  border-radius: 18px; padding: 22px 18px 18px 18px; margin-top: 10px;
+}
+QGroupBox#groupDocs::title, QGroupBox#groupCourse::title {
+  subcontrol-origin: margin; left: 16px; padding: 2px 10px;
+  color: #0f766e; font-weight: 800; font-size: 15px;
+  background: rgba(255,255,255,0.70); border-radius: 8px;
+}
+QGroupBox#groupFingerprint {
+  background: rgba(255,255,255,0.55); border: 1.5px solid rgba(255,255,255,0.80);
+  border-radius: 22px; padding: 36px;
+}
+
+/* ── Labels ── */
+QLabel#labelAppTitle { font-size: 36px; font-weight: 900; color: #ffffff; margin-bottom: 2px; }
+QLabel#labelAppSubtitle, QLabel#labelForgotSubtitle { font-size: 14px; color: rgba(255,255,255,0.85); font-style: italic; margin-bottom: 10px; }
+QLabel#pageTitleStep1, QLabel#pageTitleStep2, QLabel#pageTitleStep3, QLabel#pageTitleStep4, QLabel#pageTitleForgot { font-size: 28px; font-weight: 900; color: #0f172a; margin-bottom: 2px; }
+QLabel#labelStep1Sub, QLabel#labelStep2Sub, QLabel#labelStep3Sub, QLabel#labelStep4Sub { font-size: 14px; color: #374151; font-style: italic; margin-bottom: 8px; }
+QLabel#labelSignInTitle { font-size: 22px; font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+QLabel#labelSignEmail, QLabel#labelSignPassword, QLabel#labelForgotEmail, QLabel#labelFirstName, QLabel#labelLastName, QLabel#labelDOB, QLabel#labelPhone, QLabel#labelCIN, QLabel#labelAddress, QLabel#labelCity, QLabel#labelEmail, QLabel#labelPassword, QLabel#labelConfirm { font-size: 12px; font-weight: 700; color: #374151; margin-top: 6px; margin-bottom: 2px; letter-spacing: 0.3px; }
+QLabel#labelNoAccount { color: #374151; font-size: 13px; }
+QLabel#labelFingerprintInstr { color: #374151; font-size: 14px; margin-bottom: 10px; }
+QLabel#labelFingerprintStatus { color: #0d9488; font-weight: 700; margin-top: 8px; }
+QLabel#labelNoDoc { color: #6B7280; font-size: 12px; font-style: italic; }
+
+/* ── Glass Inputs ── */
+QLineEdit, QDateEdit, QComboBox {
+  background: rgba(255,255,255,0.45); border: 1.5px solid rgba(255,255,255,0.75);
+  border-radius: 12px; padding: 11px 16px; color: #0f172a; font-size: 14px; font-weight: 500;
+  selection-background-color: rgba(20,184,166,0.30);
+}
+QLineEdit:hover, QDateEdit:hover, QComboBox:hover {
+  background: rgba(255,255,255,0.60); border: 1.5px solid rgba(20,184,166,0.60);
+}
+QLineEdit:focus, QDateEdit:focus, QComboBox:focus {
+  background: rgba(255,255,255,0.85); border: 2px solid #14B8A6; color: #0f172a;
+}
+QLineEdit::placeholder { color: rgba(107,114,128,0.80); }
+QDateEdit::up-button { subcontrol-origin: padding; subcontrol-position: top right; width: 18px; height: 13px; background: transparent; border: none; margin-right: 4px; margin-top: 3px; }
+QDateEdit::up-button:hover { background: rgba(20,184,166,0.20); border-radius: 3px; }
+QDateEdit::up-arrow { image: url(:/assets/arrow-up.svg); width: 10px; height: 10px; }
+QDateEdit::down-button { subcontrol-origin: padding; subcontrol-position: bottom right; width: 18px; height: 13px; background: transparent; border: none; margin-right: 4px; margin-bottom: 3px; }
+QDateEdit::down-button:hover { background: rgba(20,184,166,0.20); border-radius: 3px; }
+QDateEdit::down-arrow { image: url(:/assets/arrow-down.svg); width: 10px; height: 10px; }
+
+
+/* ── Checkboxes &amp; Radio Buttons ── */
+QCheckBox, QRadioButton { padding: 8px 6px; color: #0f172a; font-size: 14px; font-weight: 500; spacing: 10px; }
+QCheckBox:hover, QRadioButton:hover { color: #0d9488; }
+QCheckBox::indicator { width: 22px; height: 22px; border-radius: 6px; border: 2px solid rgba(107,114,128,0.60); background: rgba(255,255,255,0.50); }
+QCheckBox::indicator:hover { border-color: #14B8A6; background: rgba(20,184,166,0.15); }
+QCheckBox::indicator:checked { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #14B8A6,stop:1 #0d9488); border-color: #0d9488; image: url(:/assets/checkmark.svg); }
+QRadioButton::indicator { width: 22px; height: 22px; border-radius: 11px; border: 2px solid rgba(107,114,128,0.60); background: rgba(255,255,255,0.50); }
+QRadioButton::indicator:hover { border-color: #14B8A6; background: rgba(20,184,166,0.15); }
+QRadioButton::indicator:checked { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #14B8A6,stop:1 #0d9488); border-color: #0d9488; image: url(:/assets/radiodot.svg); }
+QCheckBox#chkRemember { color: #374151; font-size: 13px; }
+
+/* ── Buttons ── */
+QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); color: #ffffff; padding: 13px 28px; border-radius: 12px; border: none; font-weight: 800; font-size: 15px; min-height: 44px; }
+QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2dd4c1,stop:1 #14B8A6); }
+QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0d9488,stop:1 #0a7e74); }
+QPushButton#btnSignIn { background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.15); padding: 14px; font-size: 16px; border-radius: 14px; margin-top: 6px; }
+QPushButton#btnSignIn:hover { background: rgba(30,41,59,0.90); }
+QPushButton#btnSignIn:pressed { background: rgba(3,7,18,0.95); }
+QPushButton#btnComplete { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); min-width: 200px; }
+QPushButton#btnSendReset { background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.15); margin-top: 4px; }
+QPushButton#btnSendReset:hover { background: rgba(30,41,59,0.90); }
+QPushButton#btnCancel, QPushButton#btnPrev2, QPushButton#btnPrev3, QPushButton#btnPrev4 { background: rgba(107,114,128,0.70); border: 1.5px solid rgba(255,255,255,0.40); color: #ffffff; padding: 13px 28px; border-radius: 12px; min-height: 44px; font-weight: 700; font-size: 15px; }
+QPushButton#btnCancel:hover, QPushButton#btnPrev2:hover, QPushButton#btnPrev3:hover, QPushButton#btnPrev4:hover { background: rgba(107,114,128,0.90); }
+QPushButton#btnForgot { background: transparent; border: none; color: #0d9488; font-weight: 700; font-size: 13px; padding: 4px; min-height: 0; text-decoration: underline; }
+QPushButton#btnForgot:hover { color: #14B8A6; background: transparent; }
+QPushButton#btnCreateAccount { background: transparent; border: none; color: #0d9488; font-weight: 800; font-size: 14px; padding: 4px 8px; min-height: 0; text-decoration: underline; }
+QPushButton#btnCreateAccount:hover { color: #14B8A6; background: transparent; }
+QPushButton#btnBackToLogin { background: transparent; border: none; color: #374151; font-weight: 600; font-size: 13px; padding: 4px; min-height: 0; }
+QPushButton#btnBackToLogin:hover { color: #0f172a; background: transparent; }
+QPushButton#btnAutomate { background: rgba(255,255,255,0.25); border: 2px solid rgba(255,255,255,0.70); color: #0f172a; padding: 8px 20px; border-radius: 10px; font-weight: 800; font-size: 13px; min-height: 0; }
+QPushButton#btnAutomate:hover { background: rgba(255,255,255,0.50); border-color: #ffffff; }
+QPushButton#btnScanFingerprint { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); color: white; padding: 16px 28px; border-radius: 14px; font-size: 16px; font-weight: 800; min-width: 300px; border: none; }
+QPushButton#btnScanFingerprint:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2dd4c1,stop:1 #14B8A6); }
+QPushButton#btnScanFingerprint:disabled { background: rgba(107,114,128,0.50); color: rgba(255,255,255,0.60); }
+QPushButton#btnScanMed { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); color: #ffffff; padding: 12px; border-radius: 10px; font-weight: 700; }
+QPushButton#btnScanMed:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2dd4c1,stop:1 #14B8A6); }
+QPushButton#btnVerifyCode { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); margin-top: 4px; }
+QPushButton#btnVerifyCode:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2dd4c1,stop:1 #14B8A6); }
+
+/* ── Scrollbar ── */
+QScrollBar:vertical { background: rgba(255,255,255,0.15); width: 8px; border-radius: 4px; }
+QScrollBar::handle:vertical { background: rgba(255,255,255,0.45); border-radius: 4px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.70); }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+/* ── Alert Labels ── */
+QLabel#labelForgotEmailError, QLabel#labelVerifyError { background: rgba(254,242,242,0.80); color: #DC2626; border: 1.5px solid #FECACA; border-radius: 10px; padding: 8px 12px; font-size: 13px; font-weight: 700; margin-top: 2px; }
+QLabel#labelCodeSent { background: rgba(240,253,249,0.80); color: #0f766e; border: 1.5px solid #5eead4; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 700; margin-top: 4px; margin-bottom: 2px; }
+QLabel#labelVerifyCodeTitle { font-size: 13px; font-weight: 700; color: #374151; margin-top: 6px; margin-bottom: 2px; }
+
+/* ── Dialogs ── */
+QMessageBox { background-color: #ffffff; }
+QMessageBox QLabel { color: #0f172a; font-size: 14px; background: transparent; }
+QMessageBox QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); color: #ffffff; padding: 8px 24px; border-radius: 8px; border: none; font-weight: 700; font-size: 13px; min-width: 80px; min-height: 32px; }
+QProgressDialog { background-color: #ffffff; }
+QProgressDialog QLabel { color: #0f172a; font-size: 14px; background: transparent; }
+QProgressDialog QPushButton { background: rgba(107,114,128,0.80); color: #ffffff; padding: 8px 20px; border-radius: 8px; border: none; font-weight: 700; font-size: 13px; min-height: 32px; }</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QStackedWidget" name="stackedWidget">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="QWidget" name="pageSignIn">
+       <layout class="QVBoxLayout" name="verticalLayout_6">
+        <item>
+         <spacer name="loginTopSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelAppTitle">
+          <property name="text">
+           <string>🚗  Driving School</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelAppSubtitle">
+          <property name="text">
+           <string>Welcome back! Sign in to your account</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignHCenter">
+         <widget class="QGroupBox" name="groupSignIn">
+          <property name="minimumSize">
+           <size>
+            <width>420</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>480</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_signin">
+           <item>
+            <widget class="QLabel" name="labelSignInTitle">
+             <property name="text">
+              <string>Sign In</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelSignEmail">
+             <property name="text">
+              <string>Email Address</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editSignEmail">
+             <property name="placeholderText">
+              <string>your@email.com</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelSignPassword">
+             <property name="text">
+              <string>Password</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editSignPassword">
+             <property name="echoMode">
+              <enum>QLineEdit::EchoMode::Password</enum>
+             </property>
+             <property name="placeholderText">
+              <string>Enter your password</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="rememberForgotRow">
+             <item>
+              <widget class="QCheckBox" name="chkRemember">
+               <property name="text">
+                <string>Remember me</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="rememberSpacer">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btnForgot">
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
+               </property>
+               <property name="text">
+                <string>Forgot password?</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnSignIn">
+             <property name="cursor">
+              <cursorShape>PointingHandCursor</cursorShape>
+             </property>
+             <property name="text">
+              <string>Sign In</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="createAccountRow">
+             <item>
+              <spacer name="createSpacer1">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QLabel" name="labelNoAccount">
+               <property name="text">
+                <string>Don't have an account?</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btnCreateAccount">
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
+               </property>
+               <property name="text">
+                <string>Create Account</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="createSpacer2">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="loginBottomSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pageForgot">
+       <layout class="QVBoxLayout" name="verticalLayout_7">
+        <item>
+         <spacer name="forgotTopSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="pageTitleForgot">
+          <property name="text">
+           <string>Reset Password</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelForgotSubtitle">
+          <property name="text">
+           <string>Enter your email and we'll send you a reset link</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignHCenter">
+         <widget class="QGroupBox" name="groupForgot">
+          <property name="minimumSize">
+           <size>
+            <width>420</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>480</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_forgot">
+           <item>
+            <widget class="QLabel" name="labelForgotEmail">
+             <property name="text">
+              <string>Email Address</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editForgotEmail">
+             <property name="placeholderText">
+              <string>your@email.com</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelForgotEmailError">
+             <property name="visible">
+              <bool>false</bool>
+             </property>
+             <property name="text">
+              <string>⚠  Please enter your email address.</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnSendReset">
+             <property name="cursor">
+              <cursorShape>PointingHandCursor</cursorShape>
+             </property>
+             <property name="text">
+              <string>Send Reset Link</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+           <widget class="QWidget" name="widgetVerify">
+            <layout class="QVBoxLayout" name="verifyLayout">
+              <property name="spacing">
+              <number>6</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>8</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="labelCodeSent">
+               <property name="text">
+                <string>✉️  A 6-digit code was sent â€” check your inbox.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="labelVerifyCodeTitle">
+               <property name="text">
+                <string>Verification Code</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="editVerifyCode">
+               <property name="maxLength">
+                <number>6</number>
+               </property>
+               <property name="placeholderText">
+                <string>Enter 6-digit code</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="labelVerifyError">
+               <property name="visible">
+                <bool>false</bool>
+               </property>
+               <property name="text">
+                <string>⚠  Incorrect code. Please try again.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btnVerifyCode">
+               <property name="text">
+                <string>Verify Code</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="backToLoginRow">
+             <item>
+              <spacer name="backSpacer1">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btnBackToLogin">
+               <property name="text">
+                <string>← Back to Login</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="backSpacer2">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="forgotBottomSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pagePersonal">
+       <layout class="QVBoxLayout" name="verticalLayout_2">
+        <item>
+         <widget class="QLabel" name="pageTitleStep1">
+          <property name="text">
+           <string>Student Registration</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelStep1Sub">
+          <property name="text">
+           <string>Step 1 of 4 — Personal Information</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignRight">
+         <widget class="QPushButton" name="btnAutomate">
+          <property name="cursor">
+           <cursorShape>PointingHandCursor</cursorShape>
+          </property>
+          <property name="text">
+           <string>✨ Auto-fill</string>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignHCenter">
+         <widget class="QGroupBox" name="groupPersonal">
+          <property name="minimumSize">
+           <size>
+            <width>600</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>800</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_personalGroup">
+           <item>
+            <layout class="QHBoxLayout" name="nameRow">
+             <item>
+              <layout class="QVBoxLayout" name="firstNameCol">
+               <item>
+                <widget class="QLabel" name="labelFirstName">
+                 <property name="text">
+                  <string>First Name *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="editFirstName">
+                 <property name="placeholderText">
+                  <string>Enter your first name</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="lastNameCol">
+               <item>
+                <widget class="QLabel" name="labelLastName">
+                 <property name="text">
+                  <string>Last Name *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="editLastName">
+                 <property name="placeholderText">
+                  <string>Enter your last name</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="dobPhoneRow">
+             <item>
+              <layout class="QVBoxLayout" name="dobCol">
+               <item>
+                <widget class="QLabel" name="labelDOB">
+                 <property name="text">
+                  <string>Date of Birth *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QDateEdit" name="editDOB">
+                 <property name="calendarPopup">
+                  <bool>false</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                   <horstretch>3</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="phoneCol">
+               <item>
+                <widget class="QLabel" name="labelPhone">
+                 <property name="text">
+                  <string>Phone Number *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="editPhone">
+                 <property name="placeholderText">
+                  <string>+212 6XX XXX XXX</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelCIN">
+             <property name="text">
+              <string>CIN (National ID) *</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editCIN">
+             <property name="placeholderText">
+              <string>e.g. AB123456</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="addressCityRow">
+             <item>
+              <layout class="QVBoxLayout" name="addressCol">
+               <item>
+                <widget class="QLabel" name="labelAddress">
+                 <property name="text">
+                  <string>Address *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="editAddress">
+                 <property name="placeholderText">
+                  <string>Enter your address</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="cityCol">
+               <item>
+                <widget class="QLabel" name="labelCity">
+                 <property name="text">
+                  <string>City *</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="editCity">
+                 <property name="placeholderText">
+                  <string>Enter your city</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="personalButtons">
+          <item>
+           <widget class="QPushButton" name="btnCancel">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>Cancel</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer2">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnNext1">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>Next →</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pageAccount">
+       <layout class="QVBoxLayout" name="verticalLayout_3">
+        <item>
+         <widget class="QLabel" name="pageTitleStep2">
+          <property name="text">
+           <string>Student Registration</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelStep2Sub">
+          <property name="text">
+           <string>Step 2 of 4 — Account Security</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignHCenter">
+         <widget class="QGroupBox" name="groupAccount">
+          <property name="minimumSize">
+           <size>
+            <width>500</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>600</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_accountGroup">
+           <item>
+            <widget class="QLabel" name="labelEmail">
+             <property name="text">
+              <string>Email Address *</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editEmail">
+             <property name="placeholderText">
+              <string>your@email.com</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelPassword">
+             <property name="text">
+              <string>Password *</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editPassword">
+             <property name="echoMode">
+              <enum>QLineEdit::EchoMode::Password</enum>
+             </property>
+             <property name="placeholderText">
+              <string>Create a strong password</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelConfirm">
+             <property name="text">
+              <string>Confirm Password *</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="editConfirm">
+             <property name="echoMode">
+              <enum>QLineEdit::EchoMode::Password</enum>
+             </property>
+             <property name="placeholderText">
+              <string>Re-enter your password</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="accountButtons">
+          <item>
+           <widget class="QPushButton" name="btnPrev2">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>← Back</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer3">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnNext2">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>Next →</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pageDocuments">
+       <layout class="QVBoxLayout" name="verticalLayout_4">
+        <item>
+         <widget class="QLabel" name="pageTitleStep3">
+          <property name="text">
+           <string>Student Registration</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelStep3Sub">
+          <property name="text">
+           <string>Step 3 of 4 — Documents &amp; Course</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupStep3Content">
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QHBoxLayout" name="docsColumns">
+           <item>
+            <widget class="QGroupBox" name="groupDocs">
+             <property name="title">
+              <string>Documents</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_docsGroup">
+              <item>
+               <widget class="QCheckBox" name="chkCIN">
+                <property name="text">
+                 <string>I have my CIN (National ID Card)</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QCheckBox" name="chkPhoto">
+                <property name="text">
+                 <string>I have my Face Photo</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QGroupBox" name="groupMedical">
+                <property name="title">
+                 <string>Medical Certificate (Optional)</string>
+                </property>
+                <layout class="QVBoxLayout" name="verticalLayout_medical">
+                 <item>
+                  <widget class="QLabel" name="labelNoDoc">
+                   <property name="text">
+                    <string>No document scanned yet</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="btnScanMed">
+                   <property name="cursor">
+                    <cursorShape>PointingHandCursor</cursorShape>
+                   </property>
+                   <property name="text">
+                    <string>Scan Medical Certificate</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupCourse">
+             <property name="title">
+              <string>Driving Course Level</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_courseGroup">
+              <item>
+               <widget class="QRadioButton" name="rbRules">
+                <property name="text">
+                 <string>Rules Theory (Code de la route)</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QRadioButton" name="rbPractical">
+                <property name="text">
+                 <string>Practical Driving</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QRadioButton" name="rbParking">
+                <property name="text">
+                 <string>Parking Maneuvers</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QGroupBox" name="groupRequiredDocs">
+                <property name="title">
+                 <string>Required documents:</string>
+                </property>
+                <layout class="QVBoxLayout" name="verticalLayout_requiredDocs">
+                 <item>
+                  <widget class="QCheckBox" name="chkTheoryExam">
+                   <property name="text">
+                    <string>I passed the theory exam (Code)</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="docsButtons">
+          <item>
+           <widget class="QPushButton" name="btnPrev3">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>← Previous</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer4">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnNext3">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>Next →</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pageFingerprint">
+       <layout class="QVBoxLayout" name="verticalLayout_5">
+        <item>
+         <widget class="QLabel" name="pageTitleStep4">
+          <property name="text">
+           <string>Student Registration</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelStep4Sub">
+          <property name="text">
+           <string>Step 4 of 4 — Fingerprint Registration</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignHCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item alignment="Qt::AlignmentFlag::AlignHCenter">
+         <widget class="QGroupBox" name="groupFingerprint">
+          <property name="minimumSize">
+           <size>
+            <width>500</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>600</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string/>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_fingerprint">
+           <item>
+            <widget class="QLabel" name="labelFingerprintInstr">
+             <property name="text">
+              <string>Place your finger on the scanner to register your fingerprint.
+This will be used for quick sign-in.</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignmentFlag::AlignHCenter</set>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnScanFingerprint">
+             <property name="cursor">
+              <cursorShape>PointingHandCursor</cursorShape>
+             </property>
+             <property name="text">
+              <string>Scan Fingerprint</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelFingerprintStatus">
+             <property name="text">
+              <string/>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignmentFlag::AlignHCenter</set>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="fingerButtons">
+          <item>
+           <widget class="QPushButton" name="btnPrev4">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>← Previous</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer5">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnComplete">
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>✓ Complete Registration</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
