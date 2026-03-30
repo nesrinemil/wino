@@ -1,5 +1,11 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "database.h"
+#include "admindashboard.h"
+#include "instructordashboard.h"
+#include "studentdashboard.h"
+#include <QSqlQuery>
+#include <QSqlError>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -14,6 +20,7 @@
 #include <QDate>
 #include <QSslSocket>
 #include <QThread>
+#include <QEventLoop>
 #include <QRandomGenerator>
 #include <QPropertyAnimation>
 #include <QParallelAnimationGroup>
@@ -38,6 +45,9 @@
 #include <ctime>
 #include <cmath>
 #include <functional>
+#include "smartdrivewindow.h"
+#include "studentlearninghub.h"
+#include "schoolselectionwindow.h"
 
 // ── Hugging Face API configuration ──
 static const QString HF_TOKEN = qEnvironmentVariable("HF_TOKEN");
@@ -87,16 +97,14 @@ MainWindow::MainWindow(QWidget *parent)
             return;
         }
 
-        QString fullName;
-        if (!verifyStudentCredentials(email, password, &fullName)) {
+        // ── Try Oracle login for all 3 roles ──
+        if (!tryLoginAllRoles(email, password)) {
             showToast("Invalid email or password.");
             ui->editSignPassword->clear();
             shakeWidget(ui->editSignPassword);
             return;
         }
-
         ui->editSignPassword->clear();
-        showSuccess("Login Successful", "Welcome, " + fullName + "!");
     });
 
     connect(ui->btnForgot, &QPushButton::clicked, this, [this]() { goToStep(1); });
@@ -321,11 +329,39 @@ MainWindow::MainWindow(QWidget *parent)
             return;
         }
 
-        showSuccess("Registration Complete",
-            "Your registration has been submitted successfully!\nWelcome to the driving school.");
+        // Get info from form to open Student Dashboard directly
+        QString email       = ui->editEmail->text().trimmed();
+
+        // Get the newly created student ID from Oracle
+        int newStudentId = 0;
+        {
+            QSqlQuery idQ;
+            idQ.prepare("SELECT id FROM STUDENTS WHERE LOWER(email)=LOWER(?) AND student_status='PENDING'");
+            idQ.addBindValue(email);
+            if (idQ.exec() && idQ.next())
+                newStudentId = idQ.value(0).toInt();
+        }
+
         m_fingerprintDone = false;
+        
+        QString firstName = ui->editFirstName->text().trimmed();
+        QString lastName  = ui->editLastName->text().trimmed();
+        bool hasLicense   = ui->chkTheoryExam->isChecked(); // Or a specific license checkbox
+        
         clearRegistrationForm();
-        goToStep(0);
+
+        // Open School Selection Windows
+        SchoolSelectionWindow *w = new SchoolSelectionWindow(newStudentId, firstName + " " + lastName, email, hasLicense, this);
+        connect(w, &SchoolSelectionWindow::schoolSelected, this, [this, w]() {
+            w->hide();
+            QMessageBox::information(this, "⏳ Pending Approval",
+                "Your registration request has been sent.\n"
+                "Please wait for your instructor to accept you.\n\n"
+                "You will be able to access the learning app once approved.");
+            this->show();
+        });
+        w->show();
+        this->hide();
     });
 
     // Start on login page
@@ -368,18 +404,130 @@ QString MainWindow::hashPassword(const QString &password) const
     return QString::fromLatin1(digest.toHex());
 }
 
-bool MainWindow::verifyStudentCredentials(const QString &email, const QString &password, QString *fullName)
+// ── Oracle: check ADMIN, ADMIN_INSTRUCTORS, then STUDENTS ──────────────
+bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 {
-    const QString emailNormalized = email.trimmed();
-    const QString passwordDigest = hashPassword(password);
+    const QString hash = hashPassword(password);
 
-    for (const Student &student : m_students) {
-        if (student.studentStatus().compare("ACTIVE", Qt::CaseInsensitive) == 0
-            && student.email().compare(emailNormalized, Qt::CaseInsensitive) == 0
-            && student.passwordHash() == passwordDigest) {
-            if (fullName) {
-                *fullName = student.fullName();
+    // 1. Check ADMIN table
+    {
+        QSqlQuery q;
+        q.prepare("SELECT id, full_name FROM ADMIN "
+                  "WHERE LOWER(email)=LOWER(?) AND password_hash=? AND status='active'");
+        q.addBindValue(email.trimmed());
+        q.addBindValue(hash);
+        if (q.exec() && q.next()) {
+            int adminId = q.value(0).toInt();
+            QString name = q.value(1).toString();
+            
+            qApp->setProperty("currentUserId", adminId);
+            qApp->setProperty("currentUserRole", "ADMIN");
+
+            // Open dashboard FIRST, then hide login — avoids blocking dialog issue
+            AdminDashboard *w = new AdminDashboard();
+            w->showMaximized();
+            this->hide();
+            QMessageBox::information(w, "✅ Welcome", "Welcome, " + name + "!\nLogged in as Administrator.");
+            return true;
+        }
+    }
+
+    // 2. Check ADMIN_INSTRUCTORS table (instructors created by admin dashboard)
+    {
+        QSqlQuery q;
+        q.prepare("SELECT id, full_name, driving_school_id FROM ADMIN_INSTRUCTORS "
+                  "WHERE LOWER(email)=LOWER(?) AND password_hash=?");
+        q.addBindValue(email.trimmed());
+        q.addBindValue(hash);
+        if (q.exec() && q.next()) {
+            int     instrId  = q.value(0).toInt();   // ADMIN_INSTRUCTORS.id
+            QString name     = q.value(1).toString();
+            int     schoolId = q.value(2).toInt();
+            // Set BEFORE constructor so dashboard reads correct ID
+            qApp->setProperty("currentUserId", instrId);
+            qApp->setProperty("currentUserRole", "INSTRUCTOR");
+            InstructorDashboard *w = new InstructorDashboard();
+            w->setSchoolId(schoolId);
+            w->init();
+            w->showMaximized();
+            this->hide();
+            QMessageBox::information(w, "✅ Welcome", "Welcome, " + name + "!\nLogged in as Instructor.");
+            return true;
+        }
+    }
+
+    // 2b. Fallback: Check INSTRUCTORS table (old data)
+    {
+        QSqlQuery q;
+        q.prepare("SELECT id, full_name, driving_school_id FROM INSTRUCTORS "
+                  "WHERE LOWER(email)=LOWER(?) AND password_hash=?");
+        q.addBindValue(email.trimmed());
+        q.addBindValue(hash);
+        if (q.exec() && q.next()) {
+            int     instrId  = q.value(0).toInt();
+            QString name     = q.value(1).toString();
+            int     schoolId = q.value(2).toInt();
+            // Set BEFORE constructor so dashboard reads correct ID
+            qApp->setProperty("currentUserId", instrId);
+            qApp->setProperty("currentUserRole", "INSTRUCTOR");
+            InstructorDashboard *w = new InstructorDashboard();
+            w->setSchoolId(schoolId);
+            w->init();
+            w->showMaximized();
+            this->hide();
+            QMessageBox::information(w, "✅ Welcome", "Welcome, " + name + "!\nLogged in as Instructor.");
+            return true;
+        }
+    }
+
+    // 3. Check STUDENTS table
+    {
+        QSqlQuery q;
+        q.prepare("SELECT id, first_name, last_name, has_driving_license, student_status FROM STUDENTS "
+                  "WHERE LOWER(email)=LOWER(?) AND password_hash=? "
+                  "AND (student_status IS NULL OR student_status NOT IN ('DELETED', 'INACTIVE'))");
+        q.addBindValue(email.trimmed());
+        q.addBindValue(hash);
+        if (q.exec() && q.next()) {
+            int     id          = q.value(0).toInt();
+            QString reqStatus   = q.value(4).toString().toUpper(); // PENDING / ACTIVE / REJECTED
+
+            // ── APPROVED → open SmartDrive learning module (integrated) ──
+            if (reqStatus == "ACTIVE") {
+                StudentLearningHub *hub = new StudentLearningHub(id);
+                hub->setAttribute(Qt::WA_DeleteOnClose);
+                hub->showMaximized();
+                this->hide();
+                return true;
             }
+
+            // ── PENDING → tell student to wait ────────────────────────────
+            if (reqStatus == "PENDING") {
+                this->show(); // Bring window back up for the message box parent
+                QMessageBox::information(this, "⏳ Pending Approval",
+                    "Your registration request has been sent.\n"
+                    "Please wait for your instructor to accept you.\n\n"
+                    "You will be able to access the learning app once approved.");
+                return true;
+            }
+
+            // ── REJECTED → let student choose another school ──────────────
+            if (reqStatus == "REJECTED") {
+                this->show();
+                QMessageBox::warning(this, "❌ Request Rejected",
+                    "Your registration request was rejected by the instructor.\n"
+                    "Please log in and select a different school, or create a new account.");
+                // We'd open school selection again ideally, but for now just tell them.
+                return true;
+            }
+
+            // ── NOT YET SENT → Fallback ────────────
+            // Set BEFORE constructor
+            qApp->setProperty("currentUserId", id);
+            qApp->setProperty("currentUserRole", "STUDENT");
+            StudentDashboard *w = new StudentDashboard();
+            w->showMaximized();
+            this->hide();
             return true;
         }
     }
@@ -389,53 +537,79 @@ bool MainWindow::verifyStudentCredentials(const QString &email, const QString &p
 
 bool MainWindow::insertStudentFromForm(QString *errorMessage)
 {
-    const QString email = ui->editEmail->text().trimmed();
-    if (email.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Email is required.");
-        }
-        return false;
-    }
-
+    const QString email    = ui->editEmail->text().trimmed();
     const QString password = ui->editPassword->text();
+    const QString cin      = ui->editCIN->text().trimmed();
+
+    if (email.isEmpty()) {
+        if (errorMessage) *errorMessage = "Email is required.";
+        return false;
+    }
     if (password.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Password is required.");
-        }
+        if (errorMessage) *errorMessage = "Password is required.";
         return false;
     }
 
-    for (const Student &existing : m_students) {
-        if (existing.email().compare(email, Qt::CaseInsensitive) == 0) {
-            if (errorMessage) {
-                *errorMessage = QStringLiteral("An account with this email already exists.");
-            }
+    // Check email uniqueness in Oracle
+    {
+        QSqlQuery ck;
+        ck.prepare("SELECT COUNT(*) FROM STUDENTS WHERE LOWER(email)=LOWER(?)");
+        ck.addBindValue(email);
+        if (ck.exec() && ck.next() && ck.value(0).toInt() > 0) {
+            if (errorMessage) *errorMessage = "An account with this email already exists.";
+            return false;
+        }
+    }
+    // Check CIN uniqueness
+    {
+        QSqlQuery ck;
+        ck.prepare("SELECT COUNT(*) FROM STUDENTS WHERE cin=?");
+        ck.addBindValue(cin);
+        if (ck.exec() && ck.next() && ck.value(0).toInt() > 0) {
+            if (errorMessage) *errorMessage = "A student with this CIN already exists.";
             return false;
         }
     }
 
-    Student student;
-    student.setId(m_students.size() + 1);
-    student.setFirstName(ui->editFirstName->text().trimmed());
-    student.setLastName(ui->editLastName->text().trimmed());
-    student.setDateOfBirth(ui->editDOB->date());
-    student.setPhone(ui->editPhone->text().trimmed());
-    student.setCin(ui->editCIN->text().trimmed());
-    student.setEmail(email);
-    student.setPasswordHash(hashPassword(password));
-    student.setHasCin(ui->chkCIN->isChecked());
-    student.setHasFacePhoto(ui->chkPhoto->isChecked());
-    student.setMedicalCertificatePath(QString());
-    student.setIsBeginner(!ui->chkTheoryExam->isChecked());
-    student.setHasDrivingLicense(false);
-    student.setHasCode(ui->chkTheoryExam->isChecked());
-    student.setHasConduite(false);
-    student.setCourseLevel(ui->rbRules->isChecked() ? "Theory"
-                                                    : (ui->rbPractical->isChecked() ? "Practical" : "Parking"));
-    student.setFingerprintRegistered(m_fingerprintDone);
-    student.setStudentStatus("ACTIVE");
+    QString courseLevel = ui->rbRules->isChecked()    ? "Theory"
+                        : ui->rbPractical->isChecked() ? "Practical" : "Parking";
+    bool hasDrivingLicense = false; // student is registering fresh
+    bool hasCode           = ui->chkTheoryExam->isChecked();
+    bool isBeginner        = !hasCode;
 
-    m_students.append(student);
+    // Format date as DD/MM/YYYY for Oracle TO_DATE
+    QString dobStr = ui->editDOB->date().toString("dd/MM/yyyy");
+
+    QSqlQuery q;
+    q.prepare(
+        "INSERT INTO STUDENTS "
+        "(first_name, last_name, date_of_birth, phone, cin, email, password_hash, "
+        " has_cin, has_face_photo, is_beginner, has_driving_license, has_code, "
+        " course_level, fingerprint_registered, student_status, enrollment_date, driving_school_id, instructor_id) "
+        "VALUES (?,?,TO_DATE(?,'DD/MM/YYYY'),?,?,?,?,?,?,?,?,?,?,?,?,SYSDATE,"
+        "(SELECT MIN(id) FROM DRIVING_SCHOOLS), (SELECT MIN(id) FROM INSTRUCTORS))"
+    );
+    q.addBindValue(ui->editFirstName->text().trimmed());
+    q.addBindValue(ui->editLastName->text().trimmed());
+    q.addBindValue(dobStr);
+    q.addBindValue(ui->editPhone->text().trimmed());
+    q.addBindValue(cin);
+    q.addBindValue(email);
+    q.addBindValue(hashPassword(password));
+    q.addBindValue(ui->chkCIN->isChecked()   ? 1 : 0);
+    q.addBindValue(ui->chkPhoto->isChecked() ? 1 : 0);
+    q.addBindValue(isBeginner        ? 1 : 0);
+    q.addBindValue(hasDrivingLicense ? 1 : 0);
+    q.addBindValue(hasCode           ? 1 : 0);
+    q.addBindValue(courseLevel);
+    q.addBindValue(m_fingerprintDone ? 1 : 0);
+    q.addBindValue("PENDING");
+
+    if (!q.exec()) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
 
     return true;
 }
@@ -470,13 +644,11 @@ void MainWindow::openCameraCapture(const QString &instruction,
                                    const QString &frameResource,
                                    std::function<void(const QString &)> callback)
 {
-    // Check if any camera is available
-    const auto cameras = QMediaDevices::videoInputs();
-    if (cameras.isEmpty()) {
-        showToast("\u26A0\u00A0 No camera detected. Please connect a camera and try again.");
-        callback("");
-        return;
-    }
+    // NOTE: We do NOT pre-check QMediaDevices::videoInputs() because on Windows
+    // the Media Foundation backend may not have finished initialising yet, causing
+    // the list to appear empty even when a camera is present.
+    // Instead we create QCamera directly (Qt will use the system default device)
+    // and handle any real failure via the errorOccurred signal below.
 
     // ── Custom view widget: paints camera frames + SVG guide overlay ──
     struct CameraView : public QWidget {
@@ -674,14 +846,27 @@ void MainWindow::openCameraCapture(const QString &instruction,
     root->addLayout(btnRow);
 
     // ── Camera setup via QVideoSink ──
-    auto *camera  = new QCamera(cameras.first(), dlg);
+    // QCamera() with no args uses the system default camera device.
+    auto *camera  = new QCamera(dlg);
     auto *session = new QMediaCaptureSession(dlg);
     auto *sink    = new QVideoSink(dlg);
-    auto *imgCap  = new QImageCapture(dlg);
-
     session->setCamera(camera);
     session->setVideoSink(sink);      // feed raw frames into our custom widget
-    session->setImageCapture(imgCap);
+
+    // ── Handle camera errors (no device, privacy blocked, driver missing…) ──
+    connect(camera, &QCamera::errorOccurred, dlg,
+            [this, dlg, hintLbl, captureBtn, callback]
+            (QCamera::Error /*err*/, const QString &errStr) {
+        hintLbl->setStyleSheet("color:#f87171; font-size:13px; background:transparent;");
+        hintLbl->setText("\u26A0  Camera error: " + errStr);
+        captureBtn->setEnabled(false);
+        QTimer::singleShot(2500, this, [this, dlg, callback, errStr]() {
+            dlg->reject();
+            showToast("\u26A0  Camera unavailable: " + errStr +
+                      "\nCheck: Settings \u2192 Privacy \u2192 Camera \u2192 ON");
+            callback("");
+        });
+    });
 
     // Push each frame into the custom view + run card detection
     connect(sink, &QVideoSink::videoFrameChanged, dlg,
@@ -704,25 +889,13 @@ void MainWindow::openCameraCapture(const QString &instruction,
 
     camera->start();
 
-    // ── imageSaved ──
-    connect(imgCap, &QImageCapture::imageSaved,
-            dlg, [dlg, hintLbl, callback](int, const QString &path) {
-        hintLbl->setText("\u2713  Captured! Processing\u2026");
-        dlg->accept();
-        callback(path);
-    });
-
-    // ── errorOccurred ──
-    connect(imgCap, &QImageCapture::errorOccurred, dlg,
-            [hintLbl, captureBtn](int, QImageCapture::Error, const QString &msg) {
-        hintLbl->setText("\u26A0 Capture failed: " + msg);
-        captureBtn->setEnabled(true);
-    });
-
-    // ── Capture button ── (3-second countdown)
+    // ── Capture button — save QVideoSink frame directly (bypasses QImageCapture) ──
+    // QImageCapture::captureToFile() throws "Unsupported image format" with the
+    // FFmpeg backend on some Windows setups.  We already have every live frame
+    // as a QImage inside camView->frame, so we just save that with QImage::save().
     connect(captureBtn, &QPushButton::clicked, dlg, [=]() {
-        if (!imgCap->isReadyForCapture()) {
-            hintLbl->setText("\u26A0 Camera not ready yet, please wait\u2026");
+        if (camView->frame.isNull()) {
+            hintLbl->setText("\u26A0  No frame yet — wait for camera to start\u2026");
             return;
         }
         captureBtn->setEnabled(false);
@@ -731,7 +904,7 @@ void MainWindow::openCameraCapture(const QString &instruction,
         countdown->setInterval(1000);
         auto *remaining = new int(3);
 
-        hintLbl->setText("\U0001F4F7  Capturing in  3…");
+        hintLbl->setText("\U0001F4F7  Capturing in  3\u2026");
 
         connect(countdown, &QTimer::timeout, dlg, [=]() {
             (*remaining)--;
@@ -742,13 +915,26 @@ void MainWindow::openCameraCapture(const QString &instruction,
                 countdown->stop();
                 delete remaining;
                 hintLbl->setText("\u23F3  Capturing\u2026");
+
+                // Grab the current live frame and save as JPEG
+                QImage snap = camView->frame;
                 QString dir  = QStandardPaths::writableLocation(
                                    QStandardPaths::TempLocation);
                 QString file = dir + "/cin_" +
                                QUuid::createUuid()
                                    .toString(QUuid::WithoutBraces).left(8) +
                                ".jpg";
-                imgCap->captureToFile(file);
+
+                if (snap.isNull() || !snap.save(file, "JPEG", 92)) {
+                    hintLbl->setText("\u26A0  Save failed — try again.");
+                    captureBtn->setEnabled(true);
+                    return;
+                }
+
+                hintLbl->setText("\u2713  Captured! Processing\u2026");
+                camera->stop();
+                dlg->accept();
+                callback(file);
             }
         });
         countdown->start();

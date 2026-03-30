@@ -1,31 +1,9 @@
-# Qt Creator and qmake build artifacts
 build/
-debug/
-release/
-
-# Generated Makefiles
-Makefile
-Makefile.Debug
-Makefile.Release
-
-# Qt Creator project user settings
 *.pro.user
-*.pro.user.*
-
-# Compiler and linker outputs
 *.o
 *.obj
-*.exe
-*.dll
-*.a
-*.lib
-*.pdb
-
-# IDE caches
-.qtc_clangd/
-
-# Local logs
-push_output.log
-push_exit.log
-push_try.log
-push_try_exit.log
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+Makefile
+.qmake.stash
