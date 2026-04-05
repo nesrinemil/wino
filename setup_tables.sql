@@ -45,6 +45,7 @@ CREATE TABLE students (
     birth_date      VARCHAR2(20),
     requested_date  VARCHAR2(30)    DEFAULT TO_CHAR(SYSDATE,'YYYY-MM-DD'),
     school_id       NUMBER          REFERENCES driving_schools(id) ON DELETE CASCADE,
+    instructor_id   NUMBER,
     status          VARCHAR2(20)    DEFAULT 'pending'
                         CHECK (status IN ('pending','approved','rejected'))
 );

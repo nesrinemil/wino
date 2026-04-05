@@ -554,10 +554,10 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
     struct InstrRow { int id; QString name; bool avail; };
     QList<InstrRow> instrRows;
     {
-        // Instructors created by admin are stored in ADMIN_INSTRUCTORS
+        // Instructors stored in INSTRUCTORS table
         QSqlQuery lq;
-        lq.prepare("SELECT id, full_name FROM admin_instructors "
-                   "WHERE driving_school_id = ? ORDER BY full_name");
+        lq.prepare("SELECT id, full_name FROM instructors "
+                   "WHERE school_id = ? ORDER BY full_name");
         lq.addBindValue(schoolId); lq.exec();
         while (lq.next())
             instrRows.append({ lq.value(0).toInt(), lq.value(1).toString(), true /*always available*/ });

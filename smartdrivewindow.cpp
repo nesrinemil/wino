@@ -38,6 +38,8 @@ SmartDriveWindow::SmartDriveWindow(int studentId, QWidget *parent)
     appLayout->setSpacing(0);
 
     m_sidebar = new Sidebar(this);
+    // The outer StudentLearningHub sidebar handles ALL navigation when embedded.
+    m_sidebar->setVisible(false);
     appLayout->addWidget(m_sidebar);
 
     m_learningModule = new CodeLearningModule(m_db, m_studentId, this);
@@ -61,6 +63,17 @@ SmartDriveWindow::SmartDriveWindow(int studentId, QWidget *parent)
 }
 
 SmartDriveWindow::~SmartDriveWindow() {}
+
+void SmartDriveWindow::navigateToIndex(int index)
+{
+    onSidebarNavigation(index);
+}
+
+void SmartDriveWindow::resetProgress()
+{
+    if (m_learningModule)
+        m_learningModule->onResetProgress();
+}
 
 void SmartDriveWindow::onLoadingComplete()
 {

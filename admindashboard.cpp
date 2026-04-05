@@ -686,6 +686,7 @@ void AdminDashboard::onAddSchoolClicked()
         QLineEdit *nameEdit;
         QLineEdit *emailEdit;
         QLineEdit *phoneEdit;
+        QLineEdit *d17Edit;   // D17 payment ID — required
         QLineEdit *pwdEdit;
         QLineEdit *cfmEdit;
         QLabel    *stepLbl;
@@ -726,12 +727,21 @@ void AdminDashboard::onAddSchoolClicked()
         QLineEdit *ne = makeField("Full name *");
         QLineEdit *ee = makeField("Email address *");
         QLineEdit *pe = makeField("Phone number");
+
+        // ── D17 ID field (required for WINO payment module) ───────────────────
+        QLineEdit *d17 = makeField("D17 ID *  (payment identifier)");
+        d17->setPlaceholderText("e.g. D17-XXXXXXXX");
+        QLabel *d17Note = noteLabel("⚠  Required — used for student payment verification in the Sessions module.");
+        d17Note->setStyleSheet("color:#F59E0B; font-size:11px; padding-left:4px;");
+
         QLineEdit *pw = makeField("Password *", true);
         QLineEdit *cm = makeField("Confirm password *", true);
 
         lay->addWidget(ne);
         lay->addWidget(ee);
         lay->addWidget(pe);
+        lay->addWidget(d17);
+        lay->addWidget(d17Note);
         lay->addWidget(pw);
         lay->addWidget(cm);
         lay->addWidget(noteLabel("Password must be at least 6 characters."));
@@ -743,7 +753,7 @@ void AdminDashboard::onAddSchoolClicked()
         btns->addWidget(nx);
         lay->addLayout(btns);
 
-        instrPages[i] = { ne, ee, pe, pw, cm, sLbl, bk, nx };
+        instrPages[i] = { ne, ee, pe, d17, pw, cm, sLbl, bk, nx };
         stack->addWidget(pg);   // stack index = 2 + i
     }
 
@@ -843,35 +853,35 @@ void AdminDashboard::onAddSchoolClicked()
 
         QString schoolName = nameEdit->text().trimmed();
 
-        // ── Insert admin instructor into ADMIN_INSTRUCTORS ─────────────
+        // ── Insert admin instructor into INSTRUCTORS ───────────────────
         QSqlQuery aq;
         aq.prepare(
-            "INSERT INTO admin_instructors (driving_school_id, full_name, email, password_hash, school_name) "
-            "VALUES (?, ?, ?, ?, ?)");
+            "INSERT INTO instructors (school_id, full_name, email, password_hash, role) "
+            "VALUES (?, ?, ?, ?, 'admin')");
         aq.addBindValue(newSchoolId);
         aq.addBindValue(adminNameEdit->text().trimmed());
         aq.addBindValue(adminEmailEdit->text().trimmed());
         aq.addBindValue(hashPwd(adminPwdEdit->text()));
-        aq.addBindValue(schoolName);
         if (!aq.exec()) {
             QMessageBox::critical(dialog, "Database Error",
                 "School created but failed to create admin instructor:\n" + aq.lastError().text());
             dialog->accept(); loadSchools(); return;
         }
 
-        // ── Insert normal instructors into ADMIN_INSTRUCTORS ───────────
+        // ── Insert normal instructors into INSTRUCTORS ─────────────────
         int n = instrCountSpin->value();
         int insertedNormal = 0;
         for (int i = 0; i < n; ++i) {
             QSqlQuery nq;
             nq.prepare(
-                "INSERT INTO admin_instructors (driving_school_id, full_name, email, password_hash, school_name) "
-                "VALUES (?, ?, ?, ?, ?)");
+                "INSERT INTO instructors (school_id, full_name, email, phone, password_hash, d17_id, role) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'instructor')");
             nq.addBindValue(newSchoolId);
             nq.addBindValue(instrPages[i].nameEdit->text().trimmed());
             nq.addBindValue(instrPages[i].emailEdit->text().trimmed());
+            nq.addBindValue(instrPages[i].phoneEdit->text().trimmed());
             nq.addBindValue(hashPwd(instrPages[i].pwdEdit->text()));
-            nq.addBindValue(schoolName);
+            nq.addBindValue(instrPages[i].d17Edit->text().trimmed());
             if (nq.exec()) {
                 ++insertedNormal;
             }
@@ -986,6 +996,14 @@ void AdminDashboard::onAddSchoolClicked()
             if (instrPages[i].emailEdit->text().trimmed().isEmpty()) {
                 QMessageBox::warning(dialog, "Validation",
                     QString("Instructor %1: email is required.").arg(i + 1));
+                return;
+            }
+            if (instrPages[i].d17Edit->text().trimmed().isEmpty()) {
+                QMessageBox::warning(dialog, "Validation",
+                    QString("Instructor %1: D17 ID is required for payment processing.").arg(i + 1));
+                instrPages[i].d17Edit->setFocus();
+                instrPages[i].d17Edit->setStyleSheet(instrPages[i].d17Edit->styleSheet() +
+                    "border: 2px solid #EF4444;");
                 return;
             }
             if (instrPages[i].pwdEdit->text().length() < 6) {

@@ -18,6 +18,11 @@ public:
     explicit SmartDriveWindow(int studentId, QWidget *parent = nullptr);
     ~SmartDriveWindow();
 
+    // Called by StudentLearningHub sidebar to navigate TACHE content
+    void navigateToIndex(int index);
+    // Called by StudentLearningHub reset button
+    void resetProgress();
+
 private slots:
     void onLoadingComplete();
     void onSidebarNavigation(int index);

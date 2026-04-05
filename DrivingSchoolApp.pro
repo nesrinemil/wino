@@ -1,4 +1,4 @@
-QT += core gui sql network multimedia multimediawidgets svg printsupport
+QT += core gui sql network multimedia multimediawidgets svg printsupport serialport texttospeech
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -103,6 +103,60 @@ FORMS += $$SDS/circuitdashboard.ui
 
 INCLUDEPATH += $$SDS
 
+# ── WINO Booking module (nesriiii integration) ───────────────────────────────
+WINO = wino
+
+SOURCES += \
+    $$WINO/connection.cpp \
+    $$WINO/thememanager.cpp \
+    $$WINO/weatherservice.cpp \
+    $$WINO/smtpmailer.cpp \
+    $$WINO/emailsender.cpp \
+    $$WINO/bookingsession.cpp \
+    $$WINO/airecommendations.cpp \
+    $$WINO/paymentverification.cpp \
+    $$WINO/wino_studentdashboard.cpp \
+    $$WINO/wino_instructordashboard.cpp \
+    $$WINO/chatbubble.cpp \
+    $$WINO/winoassistantwidget.cpp \
+    $$WINO/adminwidget.cpp
+
+HEADERS += \
+    $$WINO/connection.h \
+    $$WINO/thememanager.h \
+    $$WINO/weatherservice.h \
+    $$WINO/smtpmailer.h \
+    $$WINO/emailsender.h \
+    $$WINO/bookingsession.h \
+    $$WINO/airecommendations.h \
+    $$WINO/paymentverification.h \
+    $$WINO/weathercalendarwidget.h \
+    $$WINO/wino_bootstrap.h \
+    $$WINO/wino_studentdashboard.h \
+    $$WINO/wino_instructordashboard.h \
+    $$WINO/chatbubble.h \
+    $$WINO/winoassistantwidget.h \
+    $$WINO/adminwidget.h
+
+INCLUDEPATH += $$WINO
+
+# ── Parking module ────────────────────────────────────────────────────────────
+PARKING = parking
+
+SOURCES += \
+    $$PARKING/parkingwidget.cpp \
+    $$PARKING/sensormanager.cpp \
+    $$PARKING/parkingdbmanager.cpp \
+    $$PARKING/statisticswidget.cpp
+
+HEADERS += \
+    $$PARKING/parkingwidget.h \
+    $$PARKING/sensormanager.h \
+    $$PARKING/parkingdbmanager.h \
+    $$PARKING/statisticswidget.h
+
+INCLUDEPATH += $$PARKING
+
 FORMS += \
     mainwindow.ui \
     roleselectionwindow.ui \
@@ -118,6 +172,9 @@ RESOURCES += \
 win32 {
     LIBS += -LC:\oraclexe\app\oracle\product\11.2.0\server\bin -loci
     INCLUDEPATH += C:\oraclexe\app\oracle\product\11.2.0\server\oci\include
+
+    # qcustomplot.cpp is too large for COFF default section limit — enable big obj
+    QMAKE_CXXFLAGS += -Wa,-mbig-obj
 }
 
 # Default rules for deployment.

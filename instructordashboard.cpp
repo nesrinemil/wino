@@ -4,7 +4,12 @@
 #include "database.h"
 #include "C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool/circuitdashboard.h"
 #include "C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool/circuitdb.h"
+#include "wino/wino_instructordashboard.h"
+#include "wino/wino_bootstrap.h"
+#include "wino/adminwidget.h"
+#include "parking/parkingdbmanager.h"
 #include <QtWidgets>
+#include <QSettings>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QFileDialog>
@@ -23,36 +28,20 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
     connect(ui->logoutButton, &QPushButton::clicked, this, &InstructorDashboard::onLogoutClicked);
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &InstructorDashboard::switchTab);
 
-    // ── Circuit Analysis tab ─────────────────────────────────────────────────
-    QPushButton *circuitBtn = new QPushButton("🚦  Open Circuit Analysis Dashboard");
-    circuitBtn->setFixedHeight(48);
-    circuitBtn->setCursor(Qt::PointingHandCursor);
-    circuitBtn->setStyleSheet(
-        "QPushButton { background:#14B8A6; color:white; border:none; border-radius:10px;"
-        "              font-size:15px; font-weight:700; margin:24px; }"
-        "QPushButton:hover { background:#0D9488; }");
-    QWidget *circuitTab = new QWidget();
-    QVBoxLayout *circuitLayout = new QVBoxLayout(circuitTab);
-    circuitLayout->addStretch();
-    circuitLayout->addWidget(circuitBtn, 0, Qt::AlignCenter);
-    circuitLayout->addStretch();
-    ui->tabWidget->addTab(circuitTab, "⚡ Circuit");
+    // ── Circuit Analysis tab (lazy-loaded on first switch) ───────────────────
+    m_circuitTab = new QWidget();
+    m_circuitTab->setLayout(new QVBoxLayout(m_circuitTab));
+    ui->tabWidget->addTab(m_circuitTab, "⚡ Circuit");
 
-    connect(circuitBtn, &QPushButton::clicked, this, [this]() {
-        if (!CircuitDB::instance()->isOpen()) {
-            OracleConnectionParams p;
-            p.drivingSchoolId = schoolId;
-            p.instructorId    = instructorId;
-            if (!CircuitDB::instance()->initialize(p)) {
-                QMessageBox::critical(this, "Circuit DB Error",
-                    CircuitDB::instance()->lastError());
-                return;
-            }
-        }
-        CircuitDashboard *cd = new CircuitDashboard();
-        cd->setAttribute(Qt::WA_DeleteOnClose);
-        cd->showMaximized();
-    });
+    // ── WINO Sessions tab (lazy-loaded on first switch) ───────────────────────
+    m_winoTabWidget = new QWidget();
+    m_winoTabWidget->setLayout(new QVBoxLayout(m_winoTabWidget));
+    ui->tabWidget->addTab(m_winoTabWidget, "📅 Sessions");
+
+    // ── Administration tab (lazy-loaded on first switch) ──────────────────────
+    m_adminTabWidget = new QWidget();
+    m_adminTabWidget->setLayout(new QVBoxLayout(m_adminTabWidget));
+    ui->tabWidget->addTab(m_adminTabWidget, QString::fromUtf8("📊 Administration"));
 
     // loadData() is called by init() after login sets schoolId + instructorId
 }
@@ -587,19 +576,110 @@ void InstructorDashboard::setupVehicleCard(QWidget *card, int vehicleId, const Q
 
 void InstructorDashboard::switchTab(int index)
 {
-    Q_UNUSED(index);
+    // ── Circuit tab (index 3) ──────────────────────────────────────────────────
+    if (index == 3) {
+        if (!m_circuitDashboard) {
+            // First visit — create the widget
+            OracleConnectionParams p;
+            p.drivingSchoolId = schoolId;
+            p.instructorId    = instructorId;
+            if (!CircuitDB::instance()->initialize(p)) {
+                QMessageBox::critical(this, "Circuit DB Error",
+                    CircuitDB::instance()->lastError());
+                return;
+            }
+            {
+                QSettings cs("SmartDrivingSchool", "AnalysisApp");
+                cs.setValue("dbDrivingSchoolId", schoolId);
+                cs.setValue("dbInstructorId",    instructorId > 0 ? instructorId : 1);
+                cs.sync();
+            }
+            m_circuitDashboard = new CircuitDashboard(m_circuitTab);
+            // Auto-reset pointer if the widget is ever destroyed
+            connect(m_circuitDashboard, &QObject::destroyed, this, [this]() {
+                m_circuitDashboard = nullptr;
+            });
+            m_circuitTab->layout()->addWidget(m_circuitDashboard);
+        }
+        // Always make visible — handles the case where it was hidden/closed
+        m_circuitDashboard->show();
+        m_circuitDashboard->raise();
+    }
+
+    // ── Sessions tab (index 4) ─────────────────────────────────────────────────
+    if (index == 4) {
+        qApp->setProperty("currentUserId", instructorId > 0 ? instructorId : 1);
+
+        if (!m_winoTab) {
+            WinoBootstrap::bootstrap();
+            m_winoTab = new WinoInstructorDashboard(m_winoTabWidget);
+            // Auto-reset pointer if the widget is ever destroyed
+            connect(m_winoTab, &QObject::destroyed, this, [this]() {
+                m_winoTab = nullptr;
+            });
+            m_winoTabWidget->layout()->addWidget(m_winoTab);
+        }
+        // Always make visible
+        m_winoTab->show();
+        m_winoTab->raise();
+    }
+
+    // ── Administration tab (index 5) ──────────────────────────────────────────
+    if (index == 5) {
+        if (!m_adminTab) {
+            ParkingDBManager::instance().initialize("", "", "");
+            m_adminTab = new AdminWidget(
+                QString("Instructor"),
+                QString("Moniteur"),
+                m_adminTabWidget
+            );
+            connect(m_adminTab, &QObject::destroyed, this, [this]() {
+                m_adminTab = nullptr;
+            });
+            m_adminTabWidget->layout()->addWidget(m_adminTab);
+        }
+        m_adminTab->show();
+        m_adminTab->raise();
+    }
+
 }
 
 void InstructorDashboard::onAcceptStudent(int studentId)
 {
     QSqlQuery query;
-    query.prepare("UPDATE students SET status = 'approved' WHERE id = ?");
+    query.prepare("UPDATE students SET status = 'approved', instructor_id = ? WHERE id = ?");
+    query.addBindValue(instructorId > 0 ? instructorId : QVariant(QMetaType(QMetaType::Int)));
     query.addBindValue(studentId);
-    
-    if (query.exec()) {
-        QMessageBox::information(this, "Success", "Student request approved!");
-        loadData();
+
+    if (!query.exec()) {
+        QMessageBox::critical(this, "Error", "Failed to approve:\n" + query.lastError().text());
+        return;
     }
+
+    // Fetch student details to sync into Circuit STUDENTS table
+    QSqlQuery fetch;
+    fetch.prepare("SELECT name, email, phone FROM students WHERE id = ?");
+    fetch.addBindValue(studentId);
+    if (fetch.exec() && fetch.next()) {
+        QString fullName = fetch.value(0).toString().trimmed();
+        int sp = fullName.indexOf(' ');
+        QString firstName = (sp > 0) ? fullName.left(sp) : fullName;
+        QString lastName  = (sp > 0) ? fullName.mid(sp + 1) : QString();
+        QString email     = fetch.value(1).toString();
+        QString phone     = fetch.value(2).toString();
+
+        // Ensure CircuitDB is open before syncing
+        if (!CircuitDB::instance()->isOpen()) {
+            OracleConnectionParams p;
+            p.drivingSchoolId = schoolId;
+            p.instructorId    = instructorId;
+            CircuitDB::instance()->initialize(p);
+        }
+        CircuitDB::instance()->syncStudent(studentId, firstName, lastName, email, phone, schoolId);
+    }
+
+    QMessageBox::information(this, "Success", "Student request approved!");
+    loadData();
 }
 
 void InstructorDashboard::onRejectStudent(int studentId)

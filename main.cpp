@@ -4,10 +4,27 @@
 #include <QMessageBox>
 #include <QStyle>
 #include <QStyleFactory>
+#include <QSslConfiguration>
+#include <QSslSocket>
 
 int main(int argc, char *argv[])
 {
+    // Force Windows Schannel TLS backend before anything else.
+    // This must be called before QApplication so the backend is selected
+    // before Qt's network stack initializes.
+    qputenv("QT_TLS_BACKEND", "schannel");
+
     QApplication a(argc, argv);
+
+    // Select Schannel backend explicitly via Qt 6 API
+    if (QSslSocket::availableBackends().contains("schannel")) {
+        QSslSocket::setActiveBackend("schannel");
+    }
+
+    // Disable peer certificate verification (dev environment)
+    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    QSslConfiguration::setDefaultConfiguration(sslConfig);
 
     // Force Fusion style for consistent appearance
     a.setStyle(QStyleFactory::create("Fusion"));

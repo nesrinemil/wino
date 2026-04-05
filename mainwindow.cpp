@@ -395,7 +395,7 @@ QString MainWindow::hashPassword(const QString &password) const
     return QString::fromLatin1(digest.toHex());
 }
 
-// ── Oracle: check ADMIN, ADMIN_INSTRUCTORS, then STUDENTS ──────────────
+// ── Oracle: check ADMIN, INSTRUCTORS, then STUDENTS ───────────────────
 bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 {
     const QString hash = hashPassword(password);
@@ -418,29 +418,7 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
         }
     }
 
-    // 2. Check ADMIN_INSTRUCTORS table (instructors created by admin dashboard)
-    {
-        QSqlQuery q;
-        q.prepare("SELECT id, full_name, driving_school_id FROM ADMIN_INSTRUCTORS "
-                  "WHERE LOWER(email)=LOWER(?) AND password_hash=?");
-        q.addBindValue(email.trimmed());
-        q.addBindValue(hash);
-        if (q.exec() && q.next()) {
-            int     instrId  = q.value(0).toInt();   // ADMIN_INSTRUCTORS.id
-            QString name     = q.value(1).toString();
-            int     schoolId = q.value(2).toInt();
-            InstructorDashboard *w = new InstructorDashboard();
-            w->setSchoolId(schoolId);
-            w->setInstructorId(instrId);
-            w->init();
-            w->showMaximized();
-            this->hide();
-            QMessageBox::information(w, "✅ Welcome", "Welcome, " + name + "!\nLogged in as Instructor.");
-            return true;
-        }
-    }
-
-    // 2b. Fallback: Check INSTRUCTORS table (old data)
+    // 2. Check INSTRUCTORS table (single source of truth for all instructors)
     {
         QSqlQuery q;
         q.prepare("SELECT id, full_name, school_id FROM INSTRUCTORS "
