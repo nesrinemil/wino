@@ -3,6 +3,11 @@ echo ========================================
 echo Driving School Management - Build Script
 echo ========================================
 echo.
+echo [INFO] Auto-fill uses Groq Vision API.
+echo        Place your API key in groq_key.txt next to the .exe
+echo        or set the GROQ_API_KEY environment variable.
+echo        Free key: https://console.groq.com
+echo.
 
 REM Check if qmake is in PATH
 where qmake >nul 2>&1

@@ -8,6 +8,7 @@
 #include <QGraphicsDropShadowEffect>
 #include <QGridLayout>
 #include <QScrollArea>
+#include <QStackedWidget>
 #include <QCalendarWidget>
 #include <QTextCharFormat>
 #include <QDialog>
@@ -23,7 +24,7 @@
 #include <QVariant>
 
 WinoStudentDashboard::WinoStudentDashboard(QWidget *parent) :
-    QMainWindow(parent)
+    QWidget(parent)
 {
     // Initialize sessions data (exemple de données)
     initializeSessions();
@@ -91,108 +92,98 @@ void WinoStudentDashboard::initializeSessions()
 void WinoStudentDashboard::setupUI()
 {
     setWindowTitle("WINO - Student Dashboard");
-    setMinimumSize(1400, 900);
+    setMinimumSize(900, 600);
     
     // Connect to theme manager
     ThemeManager* theme = ThemeManager::instance();
     connect(theme, &ThemeManager::themeChanged, this, &WinoStudentDashboard::onThemeChanged);
     
-    centralWidget = new QWidget(this);
-    setCentralWidget(centralWidget);
-    
+    // ── Main stacked widget: page 0 = dashboard, page 1 = AI recommendations ──
+    m_mainStack = new QStackedWidget(this);
+    QVBoxLayout *rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
+    rootLayout->addWidget(m_mainStack);
+
+    // Page 0: dashboard container
+    centralWidget = new QWidget();
+    m_mainStack->addWidget(centralWidget);   // index 0
+
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
     
-    // Header
-    QWidget *header = new QWidget();
+    // ── Header — use QFrame so the background rule is specific and children
+    //    inherit transparency (avoids the "tab" look caused by global QWidget rule)
+    QFrame *header = new QFrame();
     header->setObjectName("header");
-    header->setFixedHeight(100);
-    
+    header->setFixedHeight(64);
+    header->setStyleSheet(
+        "QFrame#header { background-color: #0F172A; border-bottom: 1px solid #1E293B; }"
+        "QFrame#header * { background: transparent; }");   // ← forces ALL children transparent
+
     QHBoxLayout *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(30, 0, 30, 0);
-    
-    QPushButton *backBtn = new QPushButton("← Back");
+    headerLayout->setContentsMargins(20, 0, 20, 0);
+    headerLayout->setSpacing(12);
+
+    // ── Back button
+    QPushButton *backBtn = new QPushButton(QString::fromUtf8("← Back"));
+    backBtn->setObjectName("headerBackBtn");
+    backBtn->setFixedSize(90, 34);
+    backBtn->setCursor(Qt::PointingHandCursor);
     backBtn->setStyleSheet(
-        "QPushButton {"
-        "    background-color: transparent;"
+        "QPushButton#headerBackBtn {"
+        "    background: transparent;"
         "    color: #9CA3AF;"
-        "    font-size: 16px;"
-        "    font-weight: 500;"
-        "    border: none;"
-        "    padding: 12px 20px;"
-        "    line-height: 1.5;"
+        "    font-size: 13px; font-weight: 500;"
+        "    border: 1px solid #374151;"
+        "    border-radius: 8px;"
+        "    padding: 0 12px;"
         "}"
-        "QPushButton:hover { color: #14B8A6; }"
-    );
+        "QPushButton#headerBackBtn:hover { color: #14B8A6; border-color: #14B8A6; }");
     connect(backBtn, &QPushButton::clicked, this, &WinoStudentDashboard::onBackClicked);
-    
-    QVBoxLayout *titleLayout = new QVBoxLayout();
-    QLabel *titleLabel = new QLabel("Student Dashboard");
-    titleLabel->setObjectName("headerTitle");
-    titleLabel->setStyleSheet(
-        QString("QLabel#headerTitle {"
-        "    color: %1;"
-        "    font-size: 28px;"
-        "    font-weight: bold;"
-        "    line-height: 1.4;"
-        "    padding: 5px 0;"
-        "}").arg(theme->headerTextColor())
-    );
-    
-    // Fetch the logged-in student ID
+
+    // ── Fetch student name
     int studentId = qApp->property("currentUserId").toInt();
     if (studentId == 0) return;
 
-    // Real DB query to get student name
-    QString studentName = "John Doe"; // Default fallback
+    QString studentName = "Student";
     QSqlQuery queryName;
     queryName.prepare("SELECT SUBSTR(name,1,INSTR(name||' ',' ')-1), SUBSTR(name,INSTR(name||' ',' ')+1) FROM STUDENTS WHERE id = :student_id");
     queryName.bindValue(":student_id", studentId);
-    if (queryName.exec() && queryName.next()) {
+    if (queryName.exec() && queryName.next())
         studentName = queryName.value(0).toString() + " " + queryName.value(1).toString();
-    }
-    
+
+    // ── Title
+    QLabel *titleLabel = new QLabel("Sessions");
+    titleLabel->setObjectName("headerTitle");
+    titleLabel->setStyleSheet(
+        "QLabel#headerTitle {"
+        "    color: #FFFFFF; font-size: 20px; font-weight: bold;"
+        "    background: transparent; border: none; }");
+
+    // ── Separator + name
+    QLabel *sepLabel = new QLabel("·");
+    sepLabel->setStyleSheet("color: #4B5563; font-size: 18px; background: transparent; border: none;");
+
     QLabel *nameLabel = new QLabel(studentName);
     nameLabel->setObjectName("studentNameLabel");
     nameLabel->setStyleSheet(
-        QString("QLabel#studentNameLabel {"
-        "    color: %1;"
-        "    font-size: 14px;"
-        "    line-height: 1.5;"
-        "    padding: 3px 0;"
-        "}").arg(theme->headerSecondaryTextColor())
-    );
-    
-    titleLayout->addWidget(titleLabel);
-    titleLayout->addWidget(nameLabel);
-    
+        "QLabel#studentNameLabel {"
+        "    color: #9CA3AF; font-size: 14px; font-weight: 400;"
+        "    background: transparent; border: none; }");
+
     headerLayout->addWidget(backBtn);
-    headerLayout->addLayout(titleLayout);
+    headerLayout->addSpacing(12);
+    headerLayout->addWidget(titleLabel);
+    headerLayout->addWidget(sepLabel);
+    headerLayout->addWidget(nameLabel);
     headerLayout->addStretch();
-    
+
+    // Theme toggle — kept as hidden member so updateColors() doesn't crash
     themeToggleBtn = new QPushButton();
     themeToggleBtn->setObjectName("themeToggleBtn");
-    themeToggleBtn->setText(ThemeManager::instance()->currentTheme() == ThemeManager::Light ? "🌙" : "☀️");
-    themeToggleBtn->setStyleSheet(
-        QString("QPushButton#themeToggleBtn {"
-        "    background-color: %1;"
-        "    color: %2;"
-        "    font-size: 20px;"
-        "    border: 2px solid %3;"
-        "    border-radius: 20px;"
-        "    padding: 8px;"
-        "    min-width: 40px;"
-        "    min-height: 40px;"
-        "}")
-        .arg(theme->headerIconBgColor(), theme->headerTextColor(), theme->borderColor())
-    );
-    themeToggleBtn->setCursor(Qt::PointingHandCursor);
-    connect(themeToggleBtn, &QPushButton::clicked, []() {
-        ThemeManager::instance()->toggleTheme();
-    });
-    
-    headerLayout->addWidget(themeToggleBtn);
+    themeToggleBtn->setVisible(false);
     
     mainLayout->addWidget(header);
     
@@ -205,8 +196,8 @@ void WinoStudentDashboard::setupUI()
     QWidget *contentWidget = new QWidget();
     contentWidget->setObjectName("contentWidget");
     QVBoxLayout *contentLayout = new QVBoxLayout(contentWidget);
-    contentLayout->setContentsMargins(40, 40, 40, 40);
-    contentLayout->setSpacing(30);
+    contentLayout->setContentsMargins(28, 28, 28, 28);
+    contentLayout->setSpacing(20);
     
     // Action buttons
     QHBoxLayout *buttonLayout = new QHBoxLayout();
@@ -362,9 +353,30 @@ void WinoStudentDashboard::setupUI()
     
     scrollArea->setWidget(contentWidget);
     mainLayout->addWidget(scrollArea);
-    
-    // Apply initial theme colors
+
+    // Apply initial theme colors (page 0 is now ready)
     updateColors();
+
+    // ── Page 1: AI Recommendations (embedded, no longer a dialog) ────────────
+    m_aiPage = new AIRecommendations();
+    m_mainStack->addWidget(m_aiPage);   // index 1
+
+    // When the user presses "← Back to Dashboard" inside the AI page
+    connect(m_aiPage, &AIRecommendations::backRequested, this, [this]() {
+        m_mainStack->setCurrentIndex(0);
+        updateCalendarHighlights();
+        updateBalance();
+    });
+
+    // When a session is booked from the AI page, refresh the dashboard data
+    connect(m_aiPage, &AIRecommendations::sessionBooked, this, [this]() {
+        updateCalendarHighlights();
+        updateBalance();
+    });
+
+    // ── Page 2: Dedicated Exam Page ──────────────────────────────────────────
+    m_examPage = createExamPage();
+    m_mainStack->addWidget(m_examPage);  // index 2
 }
 
 QWidget* WinoStudentDashboard::createInfoCard(const QString& title, const QString& value, 
@@ -1913,10 +1925,20 @@ QWidget* WinoStudentDashboard::createBalanceCardWithPayment()
     double credit = totalDue - totalPaid; // outstanding balance (positive = student owes money)
     // ───────────────────────────────────────────────────────────
 
-    QString creditText = QString("%1 TND").arg(credit < 0 ? "+"+QString::number(-credit,'f',0) : "-"+QString::number(credit,'f',0));
+    // credit > 0  → student owes money   → red,  show as "- X TND"
+    // credit < 0  → student has credit   → green, show as "+ X TND"
+    // credit == 0 → fully settled        → green, show as "0 TND"
+    QString creditText;
+    if (qAbs(credit) < 0.01)
+        creditText = "0 TND";
+    else if (credit > 0)
+        creditText = QString("- %1 TND").arg(QString::number(credit, 'f', 0));
+    else
+        creditText = QString("+ %1 TND").arg(QString::number(-credit, 'f', 0));
+
     QLabel *balanceLabel = new QLabel(creditText);
     balanceLabel->setObjectName("balanceValue");
-    QString balanceColor = (credit > 0) ? (isDark ? "#F87171" : "#DC2626") : (isDark ? "#34D399" : "#059669");
+    QString balanceColor = (credit > 0.01) ? (isDark ? "#F87171" : "#DC2626") : (isDark ? "#34D399" : "#059669");
     balanceLabel->setStyleSheet(
         QString("QLabel#balanceValue { color: %1; font-size: 36px; font-weight: bold; line-height: 1.3; padding: 5px 0; }")
         .arg(balanceColor)
@@ -2352,19 +2374,9 @@ void WinoStudentDashboard::onBackClicked()
 
 void WinoStudentDashboard::onExamRequestClicked()
 {
-    int studentId = qApp->property("currentUserId").toInt();
-    if (studentId == 0) return;
-
-    // Read current_step directly — it is maintained by WINO_PROGRESS
-    int examStep = 1;
-    QSqlQuery qStep;
-    qStep.prepare("SELECT NVL(current_step, 1) FROM WINO_PROGRESS WHERE user_id = :sid");
-    qStep.bindValue(":sid", studentId);
-    if (qStep.exec() && qStep.next()) {
-        examStep = qStep.value(0).toInt();
-    }
-
-    showExamRequestDialog(examStep);
+    // Refresh exam page data and navigate to it
+    refreshExamPage();
+    m_mainStack->setCurrentIndex(2);
 }
 
 void WinoStudentDashboard::showExamRequestDialog(int examStep)
@@ -2499,6 +2511,568 @@ void WinoStudentDashboard::showExamRequestDialog(int examStep)
     dialog->exec();
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  EXAM PAGE  (page index 2 in m_mainStack)
+//  Clean, professional, connected to Oracle DB
+// ═════════════════════════════════════════════════════════════════════════════
+
+QWidget* WinoStudentDashboard::createExamPage()
+{
+    QWidget *page = new QWidget();
+    page->setObjectName("examPage");
+
+    QVBoxLayout *root = new QVBoxLayout(page);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+
+    // ── Top bar ─────────────────────────────────────────────────────────────
+    m_examTopBar = new QWidget(page);
+    m_examTopBar->setFixedHeight(56);
+    m_examTopBar->setObjectName("examTopBar");
+
+    QHBoxLayout *topL = new QHBoxLayout(m_examTopBar);
+    topL->setContentsMargins(20, 0, 20, 0);
+
+    QPushButton *backBtn = new QPushButton(QString::fromUtf8("\xe2\x86\x90  Sessions"), m_examTopBar);
+    backBtn->setCursor(Qt::PointingHandCursor);
+    backBtn->setObjectName("examBackBtn");
+    connect(backBtn, &QPushButton::clicked, this, [this](){
+        m_mainStack->setCurrentIndex(0);
+        updateCalendarHighlights();
+        updateBalance();
+    });
+    topL->addWidget(backBtn);
+    topL->addStretch();
+
+    QLabel *pageTitle = new QLabel(QString::fromUtf8("\xf0\x9f\x8e\x93  Examen"), m_examTopBar);
+    pageTitle->setObjectName("examPageTitle");
+    pageTitle->setStyleSheet("font-size:15px;font-weight:700;");
+    topL->addWidget(pageTitle);
+    topL->addStretch();
+
+    QWidget *spacer = new QWidget(m_examTopBar);
+    spacer->setFixedWidth(80);
+    topL->addWidget(spacer);
+
+    root->addWidget(m_examTopBar);
+
+    // ── Scrollable body ─────────────────────────────────────────────────────
+    m_examScroll = new QScrollArea(page);
+    m_examScroll->setWidgetResizable(true);
+    m_examScroll->setFrameShape(QFrame::NoFrame);
+
+    m_examBodyWidget = new QWidget();
+    m_examBodyLayout = new QVBoxLayout(m_examBodyWidget);
+    m_examBodyLayout->setContentsMargins(32, 28, 32, 40);
+    m_examBodyLayout->setSpacing(20);
+
+    m_examScroll->setWidget(m_examBodyWidget);
+    root->addWidget(m_examScroll, 1);
+
+    // Apply initial theme
+    refreshExamPage();
+
+    // Rebuild content + styles when theme changes
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, [this](ThemeManager::Theme) {
+        refreshExamPage();
+    });
+
+    return page;
+}
+
+// Helper that (re-)populates the exam page body with fresh DB data
+void WinoStudentDashboard::refreshExamPage()
+{
+    if (!m_examBodyLayout) return;
+
+    // ── Fetch current theme colors ───────────────────────────────────────────
+    ThemeManager* tm = ThemeManager::instance();
+    bool isDark       = tm->currentTheme() == ThemeManager::Dark;
+    QString C_BG      = tm->backgroundColor();
+    QString C_CARD    = tm->cardColor();
+    QString C_SURFACE = tm->surfaceColor();
+    QString C_TEXT    = tm->primaryTextColor();
+    QString C_MUTED   = tm->secondaryTextColor();
+    QString C_BORDER  = tm->borderColor();
+    QString C_TEAL    = tm->accentColor();
+
+    // ── Update shell styles (top bar + scroll area) ──────────────────────────
+    if (m_examTopBar) {
+        bool dark = isDark;
+        m_examTopBar->setStyleSheet(QString(
+            "QWidget#examTopBar{background:%1;border-bottom:1px solid %2;}")
+            .arg(tm->headerColor(), C_BORDER));
+        // Update back button and title inside top bar
+        auto backBtns = m_examTopBar->findChildren<QPushButton*>("examBackBtn");
+        for (auto *b : backBtns)
+            b->setStyleSheet(QString(
+                "QPushButton{background:transparent;color:%1;font-size:13px;border:none;padding:0 4px;}"
+                "QPushButton:hover{color:%2;}").arg(C_MUTED, C_TEXT));
+        auto titles = m_examTopBar->findChildren<QLabel*>("examPageTitle");
+        for (auto *l : titles)
+            l->setStyleSheet(QString("color:%1;font-size:15px;font-weight:700;").arg(C_TEXT));
+    }
+    if (m_examScroll) {
+        m_examScroll->setStyleSheet(QString(
+            "QScrollArea{background:%1;border:none;}"
+            "QScrollBar:vertical{background:%1;width:8px;border-radius:4px;}"
+            "QScrollBar::handle:vertical{background:%2;border-radius:4px;min-height:30px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{border:none;background:none;}")
+            .arg(C_BG, C_BORDER));
+    }
+    if (m_examBodyWidget)
+        m_examBodyWidget->setStyleSheet(QString("background:%1;").arg(C_BG));
+
+    // ── Clear previous content ───────────────────────────────────────────────
+    while (QLayoutItem *item = m_examBodyLayout->takeAt(0)) {
+        if (item->widget()) item->widget()->deleteLater();
+        delete item;
+    }
+
+    int studentId = qApp->property("currentUserId").toInt();
+
+    // ── 1. Determine current step ────────────────────────────────────────────
+    int examStep = 1;
+    {
+        QSqlQuery q;
+        q.prepare("SELECT NVL(current_step, 1) FROM WINO_PROGRESS WHERE user_id = :sid");
+        q.bindValue(":sid", studentId);
+        if (q.exec() && q.next()) examStep = q.value(0).toInt();
+    }
+    QString stepName  = (examStep == 1) ? "Code" : (examStep == 2) ? "Circuit" : "Parking";
+    QString stepIcon  = (examStep == 1)
+        ? QString::fromUtf8("\xf0\x9f\x93\x96")
+        : (examStep == 2) ? QString::fromUtf8("\xf0\x9f\x9a\x97")
+                          : QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f");
+    QString stepColor = (examStep == 1) ? "#6366f1" : (examStep == 2) ? "#f59e0b" : "#22c55e";
+
+    // ── 2. Header banner ─────────────────────────────────────────────────────
+    {
+        QFrame *hdr = new QFrame();
+        hdr->setStyleSheet(QString(
+            "QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 %1, stop:1 %2);border-radius:16px;}")
+            .arg(stepColor, stepColor + "cc"));
+        QVBoxLayout *hl = new QVBoxLayout(hdr);
+        hl->setContentsMargins(28, 24, 28, 24);
+        hl->setSpacing(8);
+
+        QLabel *ico = new QLabel(stepIcon);
+        ico->setStyleSheet("font-size:40px;background:transparent;");
+
+        QLabel *ttl = new QLabel(QString("Examen %1").arg(stepName));
+        ttl->setStyleSheet("font-size:26px;font-weight:800;color:#ffffff;background:transparent;");
+
+        QLabel *sub = new QLabel(
+            QString::fromUtf8("Demandez votre examen et suivez son avancement en temps r"
+                              "\xc3\xa9""el."));
+        sub->setWordWrap(true);
+        sub->setStyleSheet("font-size:13px;color:rgba(255,255,255,0.85);background:transparent;");
+
+        hl->addWidget(ico);
+        hl->addWidget(ttl);
+        hl->addWidget(sub);
+        m_examBodyLayout->addWidget(hdr);
+    }
+
+    // ── 3. Progress / eligibility card ──────────────────────────────────────
+    {
+        int sessionsDone = 0, sessionsMin = 5;
+        double score = 0.0;
+        {
+            QSqlQuery q;
+            q.prepare("SELECT COUNT(*) FROM SESSION_BOOKING "
+                      "WHERE student_id=:sid AND session_step=:step AND status='COMPLETED'");
+            q.bindValue(":sid",  studentId);
+            q.bindValue(":step", examStep);
+            if (q.exec() && q.next()) sessionsDone = q.value(0).toInt();
+        }
+        {
+            QSqlQuery q;
+            q.prepare("SELECT NVL(CASE WHEN :step=1 THEN code_score "
+                      "              WHEN :step=2 THEN circuit_score "
+                      "              ELSE parking_score END, 0) "
+                      "FROM WINO_PROGRESS WHERE user_id=:sid");
+            q.bindValue(":step", examStep);
+            q.bindValue(":step", examStep);
+            q.bindValue(":sid",  studentId);
+            if (q.exec() && q.next()) score = q.value(0).toDouble();
+        }
+
+        bool eligible       = (sessionsDone >= sessionsMin && score >= 60.0);
+        QString eligColor   = eligible ? "#22c55e" : "#ef4444";
+        QString eligIcon    = eligible
+            ? QString::fromUtf8("\xe2\x9c\x85")
+            : QString::fromUtf8("\xe2\x9d\x8c");
+        QString eligText    = eligible
+            ? QString::fromUtf8("\xe2\x9c\x94  Eligible \xe2\x80\x94 vous pouvez passer l'examen")
+            : QString::fromUtf8("\xe2\x9c\x96  Pas encore \xc3\xa9ligible \xe2\x80\x94 "
+                                "encore %1 s\xc3\xa9ance(s) et score \xe2\x89\xa5 60%%")
+              .arg(qMax(0, sessionsMin - sessionsDone));
+
+        QFrame *prog = new QFrame();
+        prog->setStyleSheet(QString(
+            "QFrame{background:%1;border:1px solid %2;border-radius:16px;}").arg(C_CARD, C_BORDER));
+        QVBoxLayout *pl = new QVBoxLayout(prog);
+        pl->setContentsMargins(24, 20, 24, 20);
+        pl->setSpacing(16);
+
+        QLabel *progTitle = new QLabel(QString::fromUtf8("Votre progression"));
+        progTitle->setStyleSheet(QString(
+            "font-size:15px;font-weight:700;color:%1;background:transparent;").arg(C_TEXT));
+        pl->addWidget(progTitle);
+
+        // Three stat boxes
+        QHBoxLayout *statsRow = new QHBoxLayout();
+        statsRow->setSpacing(12);
+
+        auto makeStatBox = [&](const QString &val, const QString &lbl,
+                               const QString &accent) -> QFrame* {
+            QFrame *c = new QFrame();
+            QString bgAlpha = isDark ? accent + "25" : accent + "15";
+            c->setStyleSheet(QString(
+                "QFrame{background:%1;border:1px solid %2;border-radius:12px;}")
+                .arg(bgAlpha, accent + "55"));
+            QVBoxLayout *cl = new QVBoxLayout(c);
+            cl->setContentsMargins(12, 16, 12, 16);
+            cl->setSpacing(4);
+            QLabel *v = new QLabel(val);
+            v->setStyleSheet(QString(
+                "font-size:24px;font-weight:800;color:%1;background:transparent;").arg(accent));
+            v->setAlignment(Qt::AlignCenter);
+            QLabel *l2 = new QLabel(lbl);
+            l2->setStyleSheet(QString(
+                "font-size:11px;font-weight:500;color:%1;background:transparent;").arg(C_MUTED));
+            l2->setAlignment(Qt::AlignCenter);
+            cl->addWidget(v);
+            cl->addWidget(l2);
+            return c;
+        };
+
+        statsRow->addWidget(makeStatBox(QString::number(sessionsDone),
+            QString::fromUtf8("S\xc3\xa9ances effectu\xc3\xa9""es"), "#3b82f6"), 1);
+        statsRow->addWidget(makeStatBox(
+            QString::number(score, 'f', 0) + "%",
+            QString::fromUtf8("Score actuel"), "#8b5cf6"), 1);
+        statsRow->addWidget(makeStatBox(
+            eligible ? "OUI" : "NON",
+            QString::fromUtf8("\xc3\x89ligible"), eligColor), 1);
+        pl->addLayout(statsRow);
+
+        // Eligibility banner
+        QFrame *eligBanner = new QFrame();
+        eligBanner->setStyleSheet(QString(
+            "QFrame{background:%1;border-radius:10px;border:none;}")
+            .arg(isDark ? eligColor + "22" : eligColor + "18"));
+        QHBoxLayout *el = new QHBoxLayout(eligBanner);
+        el->setContentsMargins(14, 10, 14, 10);
+        QLabel *eligLbl = new QLabel(eligText);
+        eligLbl->setWordWrap(true);
+        eligLbl->setStyleSheet(QString(
+            "font-size:12px;font-weight:600;color:%1;background:transparent;").arg(eligColor));
+        el->addWidget(eligLbl);
+        pl->addWidget(eligBanner);
+
+        m_examBodyLayout->addWidget(prog);
+    }
+
+    // ── 4. Existing exam request status ─────────────────────────────────────
+    {
+        QSqlQuery q;
+        q.prepare(
+            "SELECT status, requested_date, comments, passed "
+            "FROM   EXAM_REQUEST "
+            "WHERE  student_id=:sid AND exam_step=:step "
+            "ORDER  BY requested_date DESC FETCH FIRST 1 ROW ONLY");
+        q.bindValue(":sid",  studentId);
+        q.bindValue(":step", examStep);
+
+        if (q.exec() && q.next()) {
+            QString status   = q.value("status").toString();
+            QString reqDate  = q.value("requested_date").toDate().toString("dd/MM/yyyy");
+            QString comments = q.value("comments").toString();
+            bool    passed   = q.value("passed").toInt() == 1;
+
+            QString sColor =
+                (status == "APPROVED") ? "#22c55e" :
+                (status == "PENDING")  ? "#f59e0b" :
+                (status == "REJECTED") ? "#ef4444" : "#3b82f6";
+            QString sIcon =
+                (status == "APPROVED") ? QString::fromUtf8("\xe2\x9c\x85") :
+                (status == "PENDING")  ? QString::fromUtf8("\xe2\x8f\xb3") :
+                (status == "REJECTED") ? QString::fromUtf8("\xe2\x9d\x8c")
+                                       : QString::fromUtf8("\xf0\x9f\x8e\x93");
+
+            QFrame *reqCard = new QFrame();
+            reqCard->setStyleSheet(QString(
+                "QFrame{background:%1;border:2px solid %2;border-radius:16px;}")
+                .arg(C_CARD, sColor));
+            QVBoxLayout *rl = new QVBoxLayout(reqCard);
+            rl->setContentsMargins(20, 18, 20, 18);
+            rl->setSpacing(10);
+
+            QHBoxLayout *rh = new QHBoxLayout();
+            rh->setSpacing(12);
+            QLabel *sIco = new QLabel(sIcon);
+            sIco->setStyleSheet("font-size:26px;background:transparent;");
+            QVBoxLayout *rtxt = new QVBoxLayout();
+            rtxt->setSpacing(2);
+            QLabel *rtitle = new QLabel(
+                QString::fromUtf8("Demande d'examen \xe2\x80\x94 ") + status);
+            rtitle->setStyleSheet(QString(
+                "font-size:15px;font-weight:700;color:%1;background:transparent;").arg(sColor));
+            QLabel *rdate = new QLabel(
+                QString::fromUtf8("Soumise le ") + reqDate);
+            rdate->setStyleSheet(QString(
+                "font-size:12px;color:%1;background:transparent;").arg(C_MUTED));
+            rtxt->addWidget(rtitle);
+            rtxt->addWidget(rdate);
+            rh->addWidget(sIco);
+            rh->addLayout(rtxt, 1);
+            rl->addLayout(rh);
+
+            if (!comments.isEmpty()) {
+                QLabel *cmt = new QLabel(comments);
+                cmt->setWordWrap(true);
+                cmt->setStyleSheet(QString(
+                    "font-size:12px;color:%1;background:%2;"
+                    "border-radius:8px;padding:8px 10px;").arg(C_MUTED, C_SURFACE));
+                rl->addWidget(cmt);
+            }
+            if (passed) {
+                QLabel *passLbl = new QLabel(
+                    QString::fromUtf8("\xf0\x9f\x8f\x86  Examen r\xc3\xa9ussi !"));
+                passLbl->setStyleSheet(
+                    "font-size:14px;font-weight:700;color:#22c55e;background:transparent;");
+                rl->addWidget(passLbl);
+            }
+            m_examBodyLayout->addWidget(reqCard);
+        }
+    }
+
+    // ── 5. Available exam sessions ───────────────────────────────────────────
+    {
+        QSqlQuery q;
+        q.prepare(
+            "SELECT es.id, TO_CHAR(es.exam_date,'DD/MM/YYYY') AS exam_date, "
+            "       es.location, es.max_students, "
+            "       (SELECT COUNT(*) FROM EXAM_REGISTRATIONS er "
+            "         WHERE er.exam_session_id=es.id) AS registered "
+            "FROM   EXAM_SESSIONS es "
+            "WHERE  es.exam_date >= TRUNC(SYSDATE) AND es.exam_type=:step_name "
+            "ORDER  BY es.exam_date FETCH FIRST 5 ROWS ONLY");
+        q.bindValue(":step_name", stepName.toUpper());
+
+        if (q.exec() && q.next()) {
+            QLabel *sectionLbl = new QLabel(
+                QString::fromUtf8("\xf0\x9f\x93\x85  S\xc3\xa9""ances d'examen disponibles"));
+            sectionLbl->setStyleSheet(QString(
+                "font-size:15px;font-weight:700;color:%1;background:transparent;").arg(C_TEXT));
+            m_examBodyLayout->addWidget(sectionLbl);
+
+            do {
+                int     esId      = q.value("id").toInt();
+                QString date      = q.value("exam_date").toString();
+                QString location  = q.value("location").toString();
+                int     maxSt     = q.value("max_students").toInt();
+                int     reg       = q.value("registered").toInt();
+                int     remaining = qMax(0, maxSt - reg);
+                bool    full      = (remaining == 0);
+                QString slotClr   = full ? "#ef4444" : (remaining<=3 ? "#f59e0b" : "#22c55e");
+
+                QFrame *slot = new QFrame();
+                slot->setStyleSheet(QString(
+                    "QFrame{background:%1;border:1px solid %2;border-radius:12px;}")
+                    .arg(C_CARD, C_BORDER));
+                QHBoxLayout *sl = new QHBoxLayout(slot);
+                sl->setContentsMargins(16, 12, 16, 12);
+                sl->setSpacing(12);
+
+                QLabel *dateLbl = new QLabel(
+                    QString::fromUtf8("\xf0\x9f\x93\x85  ") + date);
+                dateLbl->setStyleSheet(QString(
+                    "font-size:14px;font-weight:700;color:%1;background:transparent;").arg(C_TEXT));
+                sl->addWidget(dateLbl);
+
+                if (!location.isEmpty()) {
+                    QLabel *locLbl = new QLabel(
+                        QString::fromUtf8("\xf0\x9f\x93\x8d  ") + location);
+                    locLbl->setStyleSheet(QString(
+                        "font-size:12px;color:%1;background:transparent;").arg(C_MUTED));
+                    sl->addWidget(locLbl);
+                }
+                sl->addStretch();
+
+                QLabel *badge = new QLabel(
+                    full ? QString::fromUtf8("Complet")
+                         : QString("%1 place(s)").arg(remaining));
+                badge->setStyleSheet(QString(
+                    "font-size:11px;font-weight:700;color:%1;"
+                    "background:%2;border-radius:8px;padding:4px 10px;")
+                    .arg(slotClr, slotClr + (isDark ? "30" : "18")));
+                sl->addWidget(badge);
+
+                if (!full) {
+                    QPushButton *bookBtn = new QPushButton(
+                        QString::fromUtf8("R\xc3\xa9""server ma place"));
+                    bookBtn->setCursor(Qt::PointingHandCursor);
+                    bookBtn->setStyleSheet(
+                        "QPushButton{background:#3b82f6;color:white;border:none;"
+                        "border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;}"
+                        "QPushButton:hover{background:#2563eb;}");
+                    connect(bookBtn, &QPushButton::clicked, this,
+                            [this, esId, studentId]() {
+                        QSqlQuery ins;
+                        ins.prepare(
+                            "INSERT INTO EXAM_REGISTRATIONS "
+                            "(student_id,exam_session_id,registered_at,status) "
+                            "VALUES(:sid,:esid,SYSDATE,'REGISTERED')");
+                        ins.bindValue(":sid",  studentId);
+                        ins.bindValue(":esid", esId);
+                        if (ins.exec()) {
+                            QMessageBox::information(this,
+                                QString::fromUtf8("Inscription confirm\xc3\xa9""e"),
+                                QString::fromUtf8(
+                                    "Votre inscription \xc3\xa0 la s\xc3\xa9""ance "
+                                    "d'examen a \xc3\xa9t\xc3\xa9 confirm\xc3\xa9""e !"));
+                            refreshExamPage();
+                        } else {
+                            QMessageBox::warning(this, "Erreur", ins.lastError().text());
+                        }
+                    });
+                    sl->addWidget(bookBtn);
+                }
+                m_examBodyLayout->addWidget(slot);
+            } while (q.next());
+        }
+    }
+
+    // ── 6. Submit exam request form ──────────────────────────────────────────
+    {
+        QFrame *form = new QFrame();
+        form->setStyleSheet(QString(
+            "QFrame{background:%1;border:1px solid %2;border-radius:16px;}").arg(C_CARD, C_BORDER));
+        QVBoxLayout *fl = new QVBoxLayout(form);
+        fl->setContentsMargins(24, 22, 24, 22);
+        fl->setSpacing(14);
+
+        // Title row with icon
+        QHBoxLayout *titleRow = new QHBoxLayout();
+        QLabel *formIcon = new QLabel(QString::fromUtf8("\xf0\x9f\x93\x9d"));
+        formIcon->setStyleSheet("font-size:22px;background:transparent;");
+        QLabel *formTitle = new QLabel(
+            QString::fromUtf8("Soumettre une demande d'examen"));
+        formTitle->setStyleSheet(QString(
+            "font-size:16px;font-weight:700;color:%1;background:transparent;").arg(C_TEXT));
+        titleRow->addWidget(formIcon);
+        titleRow->addWidget(formTitle, 1);
+        fl->addLayout(titleRow);
+
+        QLabel *formDesc = new QLabel(
+            QString::fromUtf8(
+                "Indiquez vos pr\xc3\xa9""f\xc3\xa9rences de cr\xc3\xa9""neau. "
+                "Votre instructeur confirmera la date et l'heure d\xc3\xa9""finitives."));
+        formDesc->setWordWrap(true);
+        formDesc->setStyleSheet(QString(
+            "font-size:13px;color:%1;background:transparent;").arg(C_MUTED));
+        fl->addWidget(formDesc);
+
+        // Divider
+        QFrame *div = new QFrame();
+        div->setFrameShape(QFrame::HLine);
+        div->setStyleSheet(QString("color:%1;background:%1;").arg(C_BORDER));
+        div->setFixedHeight(1);
+        fl->addWidget(div);
+
+        // Period label + combo
+        QLabel *tfLbl = new QLabel(QString::fromUtf8("P\xc3\xa9riode souhait\xc3\xa9""e :"));
+        tfLbl->setStyleSheet(QString(
+            "font-size:13px;font-weight:600;color:%1;background:transparent;").arg(C_TEXT));
+        fl->addWidget(tfLbl);
+
+        QComboBox *tfCombo = new QComboBox();
+        tfCombo->addItems({
+            QString::fromUtf8("Cette semaine"),
+            QString::fromUtf8("Ce mois-ci"),
+            QString::fromUtf8("Le mois prochain")});
+        tfCombo->setStyleSheet(QString(
+            "QComboBox{background:%1;border:1px solid %2;border-radius:8px;"
+            "padding:8px 12px;font-size:13px;color:%3;min-height:36px;}"
+            "QComboBox::drop-down{border:none;width:24px;}"
+            "QComboBox QAbstractItemView{background:%1;color:%3;border:1px solid %2;}")
+            .arg(C_SURFACE, C_BORDER, C_TEXT));
+        fl->addWidget(tfCombo);
+
+        // Unavailable dates
+        QLabel *unavLbl = new QLabel(
+            QString::fromUtf8("Dates indisponibles (optionnel) :"));
+        unavLbl->setStyleSheet(QString(
+            "font-size:13px;font-weight:600;color:%1;background:transparent;").arg(C_TEXT));
+        fl->addWidget(unavLbl);
+
+        QLineEdit *unavInput = new QLineEdit();
+        unavInput->setPlaceholderText(
+            QString::fromUtf8("Ex: lundis, 24/05, semaine du 10 juin..."));
+        unavInput->setStyleSheet(QString(
+            "QLineEdit{background:%1;border:1px solid %2;border-radius:8px;"
+            "padding:8px 12px;font-size:13px;color:%3;min-height:36px;}"
+            "QLineEdit:focus{border-color:%4;}")
+            .arg(C_SURFACE, C_BORDER, C_TEXT, C_TEAL));
+        fl->addWidget(unavInput);
+
+        // Submit button
+        QPushButton *submitBtn = new QPushButton(
+            QString::fromUtf8("\xf0\x9f\x93\xa4  Envoyer la demande"));
+        submitBtn->setCursor(Qt::PointingHandCursor);
+        submitBtn->setFixedHeight(46);
+        submitBtn->setStyleSheet(
+            "QPushButton{background:#14b8a6;color:white;border:none;border-radius:10px;"
+            "font-size:14px;font-weight:700;}"
+            "QPushButton:hover{background:#0f9d8e;}"
+            "QPushButton:disabled{background:#94a3b8;}");
+
+        connect(submitBtn, &QPushButton::clicked, this,
+                [this, tfCombo, unavInput, examStep, studentId]() {
+            int instructorId = 1;
+            {
+                QSqlQuery qi;
+                qi.prepare("SELECT INSTRUCTOR_ID FROM STUDENTS WHERE ID=:sid");
+                qi.bindValue(":sid", studentId);
+                if (qi.exec() && qi.next()) instructorId = qi.value(0).toInt();
+            }
+            QString comments = QString::fromUtf8("P\xc3\xa9riode: ") + tfCombo->currentText();
+            if (!unavInput->text().trimmed().isEmpty())
+                comments += QString::fromUtf8(" | Indisponible: ") + unavInput->text().trimmed();
+
+            QSqlQuery ins;
+            ins.prepare(
+                "INSERT INTO EXAM_REQUEST "
+                "(STUDENT_ID,INSTRUCTOR_ID,EXAM_STEP,REQUESTED_DATE,AMOUNT,STATUS,COMMENTS,PASSED) "
+                "VALUES(:sid,:iid,:step,SYSDATE,50.0,'PENDING',:comments,0)");
+            ins.bindValue(":sid",      studentId);
+            ins.bindValue(":iid",      instructorId);
+            ins.bindValue(":step",     examStep);
+            ins.bindValue(":comments", comments);
+
+            if (ins.exec()) {
+                QMessageBox::information(this,
+                    QString::fromUtf8("Demande envoy\xc3\xa9""e"),
+                    QString::fromUtf8(
+                        "Votre demande a \xc3\xa9t\xc3\xa9 transmise \xc3\xa0 votre instructeur. "
+                        "Il vous confirmera la date d'examen."));
+                refreshExamPage();
+            } else {
+                QMessageBox::warning(this, "Erreur", ins.lastError().text());
+            }
+        });
+
+        fl->addWidget(submitBtn);
+        m_examBodyLayout->addWidget(form);
+    }
+
+    m_examBodyLayout->addStretch();
+}
 
 void WinoStudentDashboard::onBookSessionClicked()
 {
@@ -2515,12 +3089,10 @@ void WinoStudentDashboard::onBookSessionClicked()
 
 void WinoStudentDashboard::onAIRecommendationsClicked()
 {
-    AIRecommendations *ai = new AIRecommendations(this);
-    connect(ai, &AIRecommendations::sessionBooked, this, [this]() {
-        updateCalendarHighlights();
-        updateBalance();
-    });
-    ai->showFullScreen();
+    // Switch to the embedded AI Recommendations page (stack index 1)
+    m_mainStack->setCurrentIndex(1);
+    // Refresh recommendation cards with the latest weather + session data
+    if (m_aiPage) m_aiPage->refreshContent();
 }
 
 void WinoStudentDashboard::updateColors()
@@ -2528,36 +3100,12 @@ void WinoStudentDashboard::updateColors()
     ThemeManager* theme = ThemeManager::instance();
     bool isDark = theme->currentTheme() == ThemeManager::Dark;
     
-    // Update header
-    QWidget* header = centralWidget->findChild<QWidget*>("header");
-    if (header) {
-        header->setStyleSheet(
-            QString("QWidget#header { background-color: %1; border-bottom: 1px solid %2; }")
-            .arg(theme->headerColor(), theme->borderColor())
-        );
-        
-        QLabel* title = header->findChild<QLabel*>("headerTitle");
-        if (title) title->setStyleSheet(QString("QLabel#headerTitle { color: %1; font-size: 28px; font-weight: bold; }").arg(theme->headerTextColor()));
-        
-        QLabel* name = header->findChild<QLabel*>("studentNameLabel");
-        if (name) name->setStyleSheet(QString("QLabel#studentNameLabel { color: %1; font-size: 14px; }").arg(theme->headerSecondaryTextColor()));
-        
-        QPushButton* toggle = header->findChild<QPushButton*>("themeToggleBtn");
-        if (toggle) {
-            toggle->setStyleSheet(
-                QString("QPushButton#themeToggleBtn {"
-                "    background-color: %1;"
-                "    color: %2;"
-                "    font-size: 20px;"
-                "    border: 2px solid %3;"
-                "    border-radius: 20px;"
-                "    padding: 8px;"
-                "    min-width: 40px;"
-                "    min-height: 40px;"
-                "}")
-                .arg(theme->headerIconBgColor(), theme->headerTextColor(), theme->borderColor())
-            );
-        }
+    // Update header — always dark regardless of theme
+    QFrame* hdrFrame = centralWidget->findChild<QFrame*>("header");
+    if (hdrFrame) {
+        hdrFrame->setStyleSheet(
+            "QFrame#header { background-color: #0F172A; border-bottom: 1px solid #1E293B; }"
+            "QFrame#header * { background: transparent; }");
     }
     
     // Update scroll area and content
@@ -2621,7 +3169,8 @@ void WinoStudentDashboard::updateColors()
         QLabel* balValue = balanceCard->findChild<QLabel*>("balanceValue");
         if (balValue) {
             QString currentText = balValue->text();
-            QString valueColor = currentText.contains("+") ? (isDark ? "#34D399" : "#059669") : (isDark ? "#F87171" : "#DC2626");
+            // "- X TND" → owes → red   |  "+ X TND" or "0 TND" → settled/credit → green
+            QString valueColor = currentText.contains("- ") ? (isDark ? "#F87171" : "#DC2626") : (isDark ? "#34D399" : "#059669");
             balValue->setStyleSheet(QString("QLabel#balanceValue { color: %1; font-size: 36px; font-weight: bold; line-height: 1.3; padding: 5px 0; }").arg(valueColor));
         }
 
@@ -2837,13 +3386,79 @@ void WinoStudentDashboard::updateColors()
         
         updateCalendarHighlights();
     }
+
+    // ── Re-apply action button styles (global qApp stylesheet flattens them) ──
+    QString darkBtnBg    = isDark ? "#1F2937" : "#374151";
+    QString darkBtnHover = isDark ? "#374151" : "#4B5563";
+
+    QPushButton *bookBtn = centralWidget->findChild<QPushButton*>("actionButton");
+    if (bookBtn) {
+        bookBtn->setStyleSheet(
+            "QPushButton#actionButton {"
+            "    background-color: #14B8A6; color: white;"
+            "    font-size: 15px; font-weight: bold;"
+            "    border: none; border-radius: 10px; padding: 16px 32px;"
+            "}"
+            "QPushButton#actionButton:hover { background-color: #0F9D8E; }"
+            "QPushButton#actionButton:pressed { background-color: #0D9488; }");
+    }
+
+    QPushButton *aiBtn = centralWidget->findChild<QPushButton*>("secondaryButton");
+    if (aiBtn) {
+        aiBtn->setStyleSheet(
+            QString("QPushButton#secondaryButton {"
+            "    background-color: %1; color: white;"
+            "    font-size: 15px; font-weight: bold;"
+            "    border: none; border-radius: 10px; padding: 16px 32px;"
+            "}"
+            "QPushButton#secondaryButton:hover { background-color: %2; }"
+            "QPushButton#secondaryButton:pressed { background-color: #111827; }").arg(darkBtnBg, darkBtnHover));
+    }
+
+    if (examBtn) {
+        examBtn->setStyleSheet(
+            QString("QPushButton#examButton {"
+            "    background-color: %1; color: white;"
+            "    font-size: 15px; font-weight: bold;"
+            "    border: none; border-radius: 10px; padding: 16px 32px;"
+            "}"
+            "QPushButton#examButton:hover { background-color: %2; }"
+            "QPushButton#examButton:pressed { background-color: #111827; }").arg(darkBtnBg, darkBtnHover));
+    }
+
+    // ── Header background ──
+    QFrame *hdr = centralWidget->findChild<QFrame*>("header");
+    if (hdr) {
+        hdr->setStyleSheet(
+            "QFrame#header { background-color: #0F172A; border-bottom: 1px solid #1E293B; }"
+            "QFrame#header * { background: transparent; }");
+    }
+
+    // ── Scroll area & content background ──
+    QScrollArea *sa = centralWidget->findChild<QScrollArea*>("scrollArea");
+    if (sa) {
+        sa->setStyleSheet(
+            QString("QScrollArea#scrollArea { background-color: %1; border: none; }"
+                    "QScrollBar:vertical { background: %1; width: 8px; border-radius: 4px; }"
+                    "QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 30px; }"
+                    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }")
+            .arg(theme->backgroundColor(), theme->tealLighter()));
+    }
+    QWidget *cw = centralWidget->findChild<QWidget*>("contentWidget");
+    if (cw) {
+        cw->setStyleSheet(
+            QString("QWidget#contentWidget { background-color: %1; }").arg(theme->backgroundColor()));
+    }
 }
 
 
 void WinoStudentDashboard::onThemeChanged()
 {
-    updateColors();
-    
+    // Defer updateColors() so it runs AFTER qApp->setStyleSheet() has been applied
+    // (StudentLearningHub::applyTheme() defers the global SS via singleShot(0)).
+    // Using singleShot(20) guarantees our widget-level styles always win.
+    QTimer::singleShot(20, this, [this]() { updateColors(); });
+
     // Update theme toggle button icon
     themeToggleBtn->setText(ThemeManager::instance()->currentTheme() == ThemeManager::Light ? "🌙" : "☀️");
 }

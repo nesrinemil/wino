@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QDate>
 #include <QPixmap>
+#include "wino/thememanager.h"
 
 namespace Ui {
 class InstructorDashboard;
@@ -49,10 +50,25 @@ private:
     QWidget                 *m_winoTabWidget     = nullptr;
     AdminWidget             *m_adminTab          = nullptr;
     QWidget                 *m_adminTabWidget    = nullptr;
+
+    // Sidebar nav buttons (student-area style)
+    QPushButton *m_navRequests   = nullptr;
+    QPushButton *m_navStudents   = nullptr;
+    QPushButton *m_navVehicles   = nullptr;
+    QPushButton *m_navCircuit    = nullptr;
+    QPushButton *m_navSessions   = nullptr;
+    QPushButton *m_navParking    = nullptr;
+    QPushButton *m_themeBtn      = nullptr;
+    QFrame      *m_sidebar       = nullptr;
+    bool         m_circuitIsDark = true;   // tracks current Circuit color state
+    void setActiveNavBtn(QPushButton *active);
+    void updateSidebarTheme();
+    void applyThemeToCircuit(bool isDark);
     void setupStudentCard(QWidget *card, int studentId, const QString &name, const QString &email,
                          const QString &phone, const QString &birthDate, const QString &requestedDate);
     void setupApprovedStudentCard(QWidget *card, int studentId, const QString &name,
-                                 const QString &email, const QString &phone);
+                                 const QString &email, const QString &phone,
+                                 const QString &cin = {});
     void setupVehicleCard(QWidget *card, int vehicleId, const QString &brand, const QString &model,
                          int year, const QString &plateNumber, const QString &transmission, const QString &status, const QString &photoPath = "");
 };

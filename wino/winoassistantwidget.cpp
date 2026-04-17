@@ -40,6 +40,9 @@ WinoAssistantWidget::WinoAssistantWidget(const QString &userName,
 {
     m_apiKey = loadBotApiKey();
     setupUI();
+    applyTheme();
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, [this](){ applyTheme(); });
 }
 
 WinoAssistantWidget::~WinoAssistantWidget()
@@ -156,12 +159,13 @@ void WinoAssistantWidget::setupUI()
     mainL->addWidget(m_typingLabel);
 
     // ── Input bar ──
-    QFrame *inputBar = new QFrame(this);
-    inputBar->setObjectName("waInputBar");
-    inputBar->setFixedHeight(64);
-    inputBar->setStyleSheet(
+    m_inputBar = new QFrame(this);
+    m_inputBar->setObjectName("waInputBar");
+    m_inputBar->setFixedHeight(64);
+    m_inputBar->setStyleSheet(
         "QFrame#waInputBar{background:white;"
         "border-top:1px solid #f0f0f0;border-radius:0;}");
+    QFrame *inputBar = m_inputBar;
 
     QHBoxLayout *inputL = new QHBoxLayout(inputBar);
     inputL->setContentsMargins(12,10,12,10);
@@ -177,15 +181,18 @@ void WinoAssistantWidget::setupUI()
         "QPushButton:hover{background:#f0f2f5;border-radius:18px;}");
     inputL->addWidget(emojiBtn);
 
-    // Mic button (decorative)
-    QPushButton *micBtn = new QPushButton(inputBar);
-    micBtn->setFixedSize(36,36);
-    micBtn->setCursor(Qt::PointingHandCursor);
-    micBtn->setText(QString::fromUtf8("\xf0\x9f\x8e\xa4"));
-    micBtn->setStyleSheet(
+    // Mic button — Windows speech recognition
+    m_micBtn = new QPushButton(inputBar);
+    m_micBtn->setFixedSize(36,36);
+    m_micBtn->setCursor(Qt::PointingHandCursor);
+    m_micBtn->setText(QString::fromUtf8("\xf0\x9f\x8e\xa4"));
+    m_micBtn->setToolTip("Click to speak");
+    m_micBtn->setStyleSheet(
         "QPushButton{background:transparent;border:none;font-size:18px;}"
         "QPushButton:hover{background:#f0f2f5;border-radius:18px;}");
-    inputL->addWidget(micBtn);
+    connect(m_micBtn, &QPushButton::clicked,
+            this, &WinoAssistantWidget::onMicClicked);
+    inputL->addWidget(m_micBtn);
 
     m_input = new QLineEdit(inputBar);
     m_input->setPlaceholderText("Ask the assistant your question...");
@@ -498,4 +505,87 @@ QString WinoAssistantWidget::loadBotApiKey() const
 {
     QSettings s("Wino", "WinoAssistant");
     return s.value("gemini_api_key", "").toString();
+}
+
+// ── Theme ────────────────────────────────────────────────────────────
+
+void WinoAssistantWidget::applyTheme()
+{
+    auto *tm = ThemeManager::instance();
+    bool dark = tm->currentTheme() == ThemeManager::Dark;
+
+    QString chatBg      = dark ? "#0F172A" : "#f0f2f5";
+    QString chatHandle  = dark ? "#475569" : "#cccccc";
+    QString inputBg     = dark ? "#1E293B" : "#ffffff";
+    QString inputBorder = dark ? "#334155" : "#f0f0f0";
+    QString inputField  = dark ? "#253548" : "#f8f9fa";
+    QString inputFocus  = dark ? "#1E293B" : "#ffffff";
+    QString fieldBorder = dark ? "#334155" : "#e2e8f0";
+    QString textColor   = dark ? "#F1F5F9" : "#2d3436";
+    QString mutedColor  = dark ? "#94A3B8" : "#636e72";
+    QString hoverColor  = dark ? "#1E293B" : "#f0f2f5";
+
+    m_chatScroll->setStyleSheet(QString(
+        "QScrollArea{background:%1;border:none;}"
+        "QScrollBar:vertical{width:5px;background:%1;}"
+        "QScrollBar::handle:vertical{background:%2;border-radius:3px;}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}")
+        .arg(chatBg, chatHandle));
+
+    m_chatContent->setStyleSheet(QString("background:%1;").arg(chatBg));
+
+    m_typingLabel->setStyleSheet(QString(
+        "QLabel{color:%1;font-size:11px;background:%2;padding:4px 16px;border:none;}")
+        .arg(mutedColor, chatBg));
+
+    if (m_inputBar) {
+        m_inputBar->setStyleSheet(QString(
+            "QFrame#waInputBar{background:%1;border-top:1px solid %2;border-radius:0;}")
+            .arg(inputBg, inputBorder));
+    }
+
+    m_input->setStyleSheet(QString(
+        "QLineEdit{background:%1;border:1.5px solid %2;"
+        "border-radius:20px;padding:8px 16px;font-size:13px;color:%3;}"
+        "QLineEdit:focus{border-color:#00b894;background:%4;}")
+        .arg(inputField, fieldBorder, textColor, inputFocus));
+
+    // Update mic/emoji button hover color
+    QString iconBtnSS = QString(
+        "QPushButton{background:transparent;border:none;font-size:18px;}"
+        "QPushButton:hover{background:%1;border-radius:18px;}").arg(hoverColor);
+    if (m_micBtn) m_micBtn->setStyleSheet(iconBtnSS);
+}
+
+// ── Microphone — Windows Speech Recognition via PowerShell ──────────
+
+void WinoAssistantWidget::onMicClicked()
+{
+    if (!m_micBtn) return;
+    m_micBtn->setEnabled(false);
+    m_micBtn->setText(QString::fromUtf8("\xf0\x9f\x94\xb4")); // red circle = recording
+
+    // Use Windows System.Speech via PowerShell (built-in, no install needed)
+    QString script =
+        "Add-Type -AssemblyName System.Speech; "
+        "$r = New-Object System.Speech.Recognition.SpeechRecognitionEngine; "
+        "$r.SetInputToDefaultAudioDevice(); "
+        "$r.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar)); "
+        "$result = $r.Recognize([TimeSpan]::FromSeconds(6)); "
+        "if ($result) { Write-Output $result.Text }";
+
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int, QProcess::ExitStatus) {
+        QString text = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        if (!text.isEmpty()) {
+            m_input->setText(text);
+            m_input->setFocus();
+        }
+        m_micBtn->setEnabled(true);
+        m_micBtn->setText(QString::fromUtf8("\xf0\x9f\x8e\xa4"));
+        proc->deleteLater();
+    });
+
+    proc->start("powershell", QStringList() << "-NoProfile" << "-Command" << script);
 }

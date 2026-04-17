@@ -8,6 +8,7 @@
 #include <QFrame>
 #include <QVBoxLayout>
 #include <QProgressBar>
+#include "wino/thememanager.h"
 #include "smartdrivewindow.h"
 #include "parking/parkingwidget.h"
 #include "parking/parkingdbmanager.h"
@@ -37,6 +38,7 @@ private slots:
     void showSessions();
     void showParking();
     void showAssistant();
+    void applyTheme();          // called when ThemeManager emits themeChanged
 
 private:
     // ── Identity ─────────────────────────────────────────────────────────────
@@ -52,6 +54,9 @@ private:
     double m_parkingScore  = 0.0;
 
     // ── Navigation ───────────────────────────────────────────────────────────
+    QFrame         *m_sidebar       = nullptr;   // kept for applyTheme()
+    QPushButton    *m_activeMainBtn = nullptr;   // currently highlighted nav button
+    QPushButton    *m_themeBtn      = nullptr;   // light/dark toggle in sidebar bottom
     QStackedWidget *m_stack;
     QPushButton    *m_theoryBtn;
     QPushButton    *m_circuitBtn;

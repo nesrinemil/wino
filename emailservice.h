@@ -19,8 +19,6 @@
 
 #include <QObject>
 #include <QString>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 
 class EmailService : public QObject
 {
@@ -72,8 +70,6 @@ private:
                        const QString &subject,
                        const QString &message,
                        const QString &schoolName);
-
-    QNetworkAccessManager *m_manager;
 
     // ── EmailJS credentials ──────────────────────────────────────
     // Replace these with your real values from emailjs.com

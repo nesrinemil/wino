@@ -19,16 +19,20 @@
 #include <QGraphicsDropShadowEffect>
 #include <QDateEdit>
 #include <QSpinBox>
+#include "thememanager.h"
 
 class AdminWidget : public QWidget
 {
     Q_OBJECT
 public:
     explicit AdminWidget(const QString &userName, const QString &userRole,
-                         QWidget *parent = nullptr);
+                         int instructorId = 0, QWidget *parent = nullptr);
 
 public slots:
     void refreshAll();
+
+private slots:
+    void applyTheme();
 
 private:
     void setupUI();
@@ -42,6 +46,7 @@ private:
 
     // ── Pages ──
     QWidget* createDashboardPage();
+    QWidget* createParkingStudentsPage();   // index 10 — Oracle-based, instructor-facing
     QWidget* createElevesPage();
     QWidget* createVehiculesPage();
     QWidget* createSessionsPage();
@@ -118,8 +123,10 @@ private:
 
     QString m_userName, m_userRole;
     bool m_isMoniteur;
+    int  m_instructorId = 0;   // 0 = admin (show all), >0 = filter by instructor
 
     // UI
+    QFrame      *m_banner  = nullptr;
     QStackedWidget *m_pages;
     QList<QPushButton*> m_navBtns;
     QLineEdit *m_searchEdit;

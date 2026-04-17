@@ -1,5 +1,6 @@
 #include "smartdrivewindow.h"
 #include "../9/animatedstackedwidget.h"
+#include "wino/thememanager.h"
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QFile>
@@ -7,14 +8,21 @@
 
 SmartDriveWindow::SmartDriveWindow(int studentId, QWidget *parent)
     : QMainWindow(parent)
-    , m_isDarkMode(true)
+    , m_isDarkMode(ThemeManager::instance()->currentTheme() == ThemeManager::Dark)
     , m_studentId(studentId)
 {
     setWindowTitle("SmartDrive — Driving Theory");
     resize(1280, 820);
     setMinimumSize(1050, 720);
 
-    loadStylesheet(true);
+    // Sync initial stylesheet with the current app theme
+    loadStylesheet(m_isDarkMode);
+
+    // Stay in sync when user toggles theme from the sidebar toggle
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, [this](ThemeManager::Theme t) {
+                onDarkModeToggled(t == ThemeManager::Dark);
+            });
 
     // Use the same DB connection as maryem (already open)
     m_db = new DatabaseManager(this);
@@ -102,14 +110,20 @@ void SmartDriveWindow::onDarkModeToggled(bool isDark)
     loadStylesheet(isDark);
     m_sidebar->setDarkMode(isDark);
     m_learningModule->setDarkMode(isDark);
+    // Keep ThemeManager in sync so all other pages follow
+    ThemeManager::instance()->setTheme(isDark ? ThemeManager::Dark : ThemeManager::Light);
 }
 
 void SmartDriveWindow::loadStylesheet(bool dark)
 {
     QString path = dark ? ":/resources/style.qss" : ":/resources/style_light.qss";
     QFile f(path);
-    if (f.open(QFile::ReadOnly | QFile::Text)) {
-        qApp->setStyleSheet(f.readAll());
-        f.close();
-    }
+    if (!f.open(QFile::ReadOnly | QFile::Text)) return;
+    QString ss = f.readAll();
+    f.close();
+
+    // Apply on THIS widget only (not qApp) so StudentLearningHub's global
+    // stylesheet does not overwrite it on the first load or on theme toggles.
+    // Widget-level stylesheets always take precedence over the application stylesheet.
+    setStyleSheet(ss);
 }

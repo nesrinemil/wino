@@ -17,9 +17,10 @@
 #include <QVariant>
 #include <QDebug>
 #include <QTime>
+#include <QSet>
 
 AIRecommendations::AIRecommendations(QWidget *parent) :
-    QDialog(parent)
+    QWidget(parent)
 {
     setupUI();
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, &AIRecommendations::onThemeChanged);
@@ -42,12 +43,18 @@ AIRecommendations::~AIRecommendations()
 {
 }
 
+void AIRecommendations::refreshContent()
+{
+    // Rebuild recommendation cards with latest data
+    if (!WeatherService::instance()->hasData()) {
+        WeatherService::instance()->fetchForecast(); // will trigger onWeatherDataReady when done
+    } else {
+        updateColors(); // data already available — rebuild immediately
+    }
+}
+
 void AIRecommendations::setupUI()
 {
-    setWindowTitle("AI Recommendations");
-    // setWindowState(Qt::WindowMaximized); // Handled by showFullScreen() from dashboard
-    setMinimumSize(1200, 800);
-    
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
@@ -64,7 +71,7 @@ void AIRecommendations::setupUI()
     QPushButton *backBtn = new QPushButton("← Back to Dashboard");
     backBtn->setObjectName("backBtn");
     backBtn->setCursor(Qt::PointingHandCursor);
-    connect(backBtn, &QPushButton::clicked, this, &AIRecommendations::close);
+    connect(backBtn, &QPushButton::clicked, this, &AIRecommendations::backRequested);
     
     QLabel *titleLabel = new QLabel("✨ AI Weather-Smart Recommendations");
     titleLabel->setObjectName("titleLabel");
@@ -228,242 +235,314 @@ void AIRecommendations::updateColors()
             bannerLayout->addLayout(bannerText, 1);
             contentLayout->addWidget(weatherBanner);
             
-            // ── Section Title ──
-            QLabel *recsTitle = new QLabel("🎯 Smart Session Recommendations");
-            recsTitle->setStyleSheet(
-                QString("QLabel {"
-                "    color: %1;"
-                "    font-size: 22px;"
-                "    font-weight: bold;"
-                "    margin-bottom: 15px;"
-                "}").arg(theme->primaryTextColor())
-            );
-            contentLayout->addWidget(recsTitle);
-            
-            QLabel *recsSubtitle = new QLabel("Personalized sessions based on your habits, weather, and instructor availability");
-            recsSubtitle->setStyleSheet(
-                QString("QLabel { color: %1; font-size: 13px; font-style: italic; margin-bottom: 5px; }")
-                .arg(theme->secondaryTextColor())
-            );
-            contentLayout->addWidget(recsSubtitle);
-            
-            // ── Collect Data ──
+            // ── Collect student data ──────────────────────────────────────────────
             int studentId = qApp->property("currentUserId").toInt();
-            if (studentId == 0) return; // Strict: no fallback
-            
+            if (studentId == 0) return;
+
             int schoolId = 5;
-            QSqlQuery qsc;
-            qsc.prepare("SELECT school_id FROM STUDENTS WHERE id = :id");
-            qsc.bindValue(":id", studentId);
-            if (qsc.exec() && qsc.next() && !qsc.value(0).isNull()) {
-                schoolId = qsc.value(0).toInt();
-            }
+            { QSqlQuery q; q.prepare("SELECT school_id FROM STUDENTS WHERE id=:id");
+              q.bindValue(":id", studentId);
+              if (q.exec() && q.next() && !q.value(0).isNull()) schoolId = q.value(0).toInt(); }
 
-            QString activeStageStr = "Code Theory"; // default
-            QSqlQuery qProg;
-            qProg.prepare("SELECT code_status, circuit_status, parking_status FROM WINO_PROGRESS WHERE user_id = :student_id");
-            qProg.bindValue(":student_id", studentId);
-            if (qProg.exec() && qProg.next()) {
-                QString cStatus = qProg.value(0).toString();
-                QString circStatus = qProg.value(1).toString();
-                QString pStatus = qProg.value(2).toString();
-                
-                if (pStatus == "IN_PROGRESS" || pStatus == "ACTIVE") activeStageStr = "Parking";
-                else if (circStatus == "IN_PROGRESS" || circStatus == "ACTIVE") activeStageStr = "Circuit";
-                else if (cStatus == "IN_PROGRESS" || cStatus == "ACTIVE") activeStageStr = "Code Theory";
-                else if (cStatus == "COMPLETED" && circStatus != "COMPLETED") activeStageStr = "Circuit";
-                else if (circStatus == "COMPLETED" && pStatus != "COMPLETED") activeStageStr = "Parking";
-            }
+            // Active learning stage
+            QString activeStageStr = "Code Theory";
+            { QSqlQuery q;
+              q.prepare("SELECT code_status, circuit_status, parking_status FROM WINO_PROGRESS WHERE user_id=:id");
+              q.bindValue(":id", studentId);
+              if (q.exec() && q.next()) {
+                  QString cs = q.value(0).toString(), ci = q.value(1).toString(), pk = q.value(2).toString();
+                  if      (pk == "IN_PROGRESS" || pk == "ACTIVE")  activeStageStr = "Parking";
+                  else if (ci == "IN_PROGRESS" || ci == "ACTIVE")  activeStageStr = "Circuit";
+                  else if (cs == "IN_PROGRESS" || cs == "ACTIVE")  activeStageStr = "Code Theory";
+                  else if (cs == "COMPLETED"   && ci != "COMPLETED") activeStageStr = "Circuit";
+                  else if (ci == "COMPLETED"   && pk != "COMPLETED") activeStageStr = "Parking";
+              } }
 
-            // Student Habit
-            QString prefDay = "";
-            QString prefTime = "10:00:00";
-            QSqlQuery qPref;
-            qPref.prepare("SELECT TO_CHAR(session_date, 'D') as d_num, start_time as s_time, COUNT(*) as cnt "
-                          "FROM SESSION_BOOKING WHERE student_id = :id "
-                          "GROUP BY TO_CHAR(session_date, 'D'), start_time ORDER BY COUNT(*) DESC");
-            qPref.bindValue(":id", studentId);
-            if (qPref.exec() && qPref.next()) {
-                prefDay = qPref.value(0).toString(); // '1'=Sunday in Oracle depending on NLS, let's just use start_time
-                prefTime = qPref.value(1).toString();
-            }
+            bool isCircuit = (activeStageStr == "Circuit");
 
-            // Gather instructors
-            QList<int> instructors;
-            QSqlQuery qInst;
-            qInst.prepare("SELECT id FROM INSTRUCTORS WHERE instructor_status = 'ACTIVE' AND school_id = :school_id");
-            qInst.bindValue(":school_id", schoolId);
-            if (qInst.exec()) {
-                while (qInst.next()) instructors.append(qInst.value(0).toInt());
-            }
-            if (instructors.isEmpty()) instructors.append(1); // fallback
-            
-            // ── Build weather-driven recommendation cards ──
-            struct WeatherDay {
-                QDate date;
-                DayWeather weather;
-                int suitability;
-                QString sessionType;
-                QString reason;
-                QString timeSlot;
-                bool isPreferredHabit;
-                int instructorId;
+            // ── CIRCUIT: fetch performance + weak points from DB ────────────────
+            // WeakPoint: one entry per unique category from RECOMMENDATIONS table
+            struct WeakPoint {
+                QString category;
+                QString message;
+                QString suggestion;
+                QString priority;         // CRITICAL | HIGH | MEDIUM | LOW
+                int     priorityOrder;    // 1..4 (1 = most urgent)
             };
-            
-            QList<WeatherDay> days;
-            
-            for (int i = 1; i <= 30; i++) {
-                QDate date = QDate::currentDate().addDays(i);
-                DayWeather dw = weather->getWeather(date);
-                if (dw.weatherCode < 0) continue;
-                
-                int suitability = WeatherService::weatherCodeToSuitability(dw.weatherCode);
-                if (suitability < 50) continue; // skip bad weather days
-                
-                int dNum = date.dayOfWeek();
-                QString dtStr;
-                switch(dNum) {
-                    case 1: dtStr = "MONDAY"; break;
-                    case 2: dtStr = "TUESDAY"; break;
-                    case 3: dtStr = "WEDNESDAY"; break;
-                    case 4: dtStr = "THURSDAY"; break;
-                    case 5: dtStr = "FRIDAY"; break;
-                    case 6: dtStr = "SATURDAY"; break;
-                    case 7: dtStr = "SUNDAY"; break;
-                }
-                
-                QString foundTime = "";
-                bool isPref = false;
-                int foundInstId = instructors.isEmpty() ? 1 : instructors.first();
+            QList<WeakPoint> weakPoints;
 
-                // Test prefTime first
-                int pd = prefTime.left(2).toInt();
-                bool prefAvail = false;
-                for (int instId : instructors) {
-                    // check availability table
-                    QSqlQuery qAva;
-                    qAva.prepare("SELECT start_time FROM AVAILABILITY WHERE instructor_id = :id AND day_of_week = :d AND is_active = 1");
-                    qAva.bindValue(":id", instId);
-                    qAva.bindValue(":d", dtStr);
-                    bool instHasAvail = false;
-                    if (qAva.exec()) {
-                        while (qAva.next()) {
-                            if (qAva.value(0).toString().left(2).toInt() == pd) instHasAvail = true;
-                        }
-                    }
-                    if (instHasAvail) {
-                        // check overlap
-                        QSqlQuery qb;
-                        qb.prepare("SELECT start_time, end_time FROM SESSION_BOOKING WHERE instructor_id = :id AND TRUNC(session_date) = :sd AND status IN ('CONFIRMED', 'COMPLETED')");
-                        qb.bindValue(":id", instId);
-                        qb.bindValue(":sd", date);
-                        bool overlap = false;
-                        if (qb.exec()) {
-                            while (qb.next()) {
-                                int sH = qb.value(0).toString().left(2).toInt();
-                                int eH = qb.value(1).toString().left(2).toInt();
-                                if (pd >= sH && pd < eH) overlap = true;
-                                if (sH == pd) overlap = true;
-                            }
-                        }
-                        if (!overlap) {
-                            prefAvail = true;
-                            foundInstId = instId;
-                            break;
-                        }
-                    }
+            if (isCircuit) {
+                // ── Latest session performance banner (SESSION_ANALYSIS) ──────────
+                QSqlQuery qAna;
+                qAna.prepare(
+                    "SELECT sa.overall_performance, sa.stress_index, sa.risk_score, sa.ml_risk_level "
+                    "FROM SESSION_ANALYSIS sa "
+                    "JOIN DRIVING_SESSIONS ds ON sa.driving_session_id = ds.driving_session_id "
+                    "WHERE ds.student_id = :sid "
+                    "ORDER BY sa.analysis_date DESC"
+                );
+                qAna.bindValue(":sid", studentId);
+                if (qAna.exec() && qAna.next()) {
+                    QString overallPerf = qAna.value(0).toString();
+                    double  stressIdx   = qAna.value(1).toDouble();
+                    double  riskScore   = qAna.value(2).toDouble();
+                    QString mlRisk      = qAna.value(3).toString();
+
+                    QString borderCol = riskScore > 60 ? (isDark ? "#F87171" : "#EF4444")
+                                      : riskScore > 35 ? (isDark ? "#FBBF24" : "#F59E0B")
+                                                       : (isDark ? "#34D399" : "#10B981");
+
+                    QFrame *perfCard = new QFrame();
+                    perfCard->setStyleSheet(QString(
+                        "QFrame { background-color: %1; border-radius: 12px;"
+                        "         border-left: 4px solid %2; }")
+                        .arg(theme->cardColor(), borderCol));
+                    QHBoxLayout *pLay = new QHBoxLayout(perfCard);
+                    pLay->setContentsMargins(20, 14, 20, 14); pLay->setSpacing(16);
+
+                    QLabel *pIcon = new QLabel(riskScore > 60 ? "⚠️" : riskScore > 35 ? "📊" : "✅");
+                    pIcon->setStyleSheet("font-size: 26px; border:none; background:transparent;");
+
+                    QVBoxLayout *ptxt = new QVBoxLayout(); ptxt->setSpacing(3);
+                    QLabel *pt1 = new QLabel(QString("📈 Dernière séance circuit — %1").arg(overallPerf));
+                    pt1->setStyleSheet(QString("QLabel{color:%1;font-size:15px;font-weight:bold;border:none;background:transparent;}").arg(theme->primaryTextColor()));
+                    QLabel *pt2 = new QLabel(QString("Stress: %1%  ·  Risque: %2%  ·  Niveau IA: %3")
+                        .arg(stressIdx,0,'f',1).arg(riskScore,0,'f',1).arg(mlRisk));
+                    pt2->setStyleSheet(QString("QLabel{color:%1;font-size:12px;border:none;background:transparent;}").arg(theme->secondaryTextColor()));
+                    ptxt->addWidget(pt1); ptxt->addWidget(pt2);
+                    pLay->addWidget(pIcon); pLay->addLayout(ptxt, 1);
+                    contentLayout->addWidget(perfCard);
                 }
 
-                if (prefAvail) {
-                    foundTime = prefTime.left(5);
-                    isPref = true;
-                } else {
-                    // find arbitrary available
-                    for (int h = 9; h <= 16; h++) {
-                        for (int instId : instructors) {
-                            QSqlQuery qAva;
-                            qAva.prepare("SELECT start_time FROM AVAILABILITY WHERE instructor_id = :id AND day_of_week = :d AND is_active = 1");
-                            qAva.bindValue(":id", instId);
-                            qAva.bindValue(":d", dtStr);
-                            bool instHasAvail = false;
-                            if (qAva.exec()) {
-                                while (qAva.next()) {
-                                    if (qAva.value(0).toString().left(2).toInt() == h) instHasAvail = true;
-                                }
-                            }
-                            if (instHasAvail) {
-                                QSqlQuery qb;
-                                qb.prepare("SELECT start_time, end_time FROM SESSION_BOOKING WHERE instructor_id = :id AND TRUNC(session_date) = :sd AND status IN ('CONFIRMED', 'COMPLETED')");
-                                qb.bindValue(":id", instId);
-                                qb.bindValue(":sd", date);
-                                bool overlap = false;
-                                if (qb.exec()) {
-                                    while(qb.next()){
-                                        int sH = qb.value(0).toString().left(2).toInt();
-                                        int eH = qb.value(1).toString().left(2).toInt();
-                                        if (h >= sH && h < eH) overlap = true;
-                                        if (sH == h) overlap = true;
-                                    }
-                                }
-                                if (!overlap) {
-                                    foundTime = QString("%1:00").arg(h, 2, 10, QChar('0'));
-                                    foundInstId = instId;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!foundTime.isEmpty()) break;
+                // ── Weak points from RECOMMENDATIONS table ────────────────────────
+                QSqlQuery qRec;
+                qRec.prepare(
+                    "SELECT r.category, r.message, r.suggestion, r.priority "
+                    "FROM RECOMMENDATIONS r "
+                    "JOIN DRIVING_SESSIONS ds ON r.driving_session_id = ds.driving_session_id "
+                    "WHERE ds.student_id = :sid "
+                    "  AND r.priority IN ('CRITICAL','HIGH','MEDIUM') "
+                    "ORDER BY CASE r.priority "
+                    "           WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 "
+                    "           WHEN 'MEDIUM'   THEN 3 ELSE 4 END, "
+                    "         r.created_date DESC"
+                );
+                qRec.bindValue(":sid", studentId);
+                QSet<QString> seenCats;
+                if (qRec.exec()) {
+                    while (qRec.next()) {
+                        QString cat = qRec.value(0).toString().trimmed();
+                        if (cat.isEmpty() || seenCats.contains(cat)) continue;
+                        seenCats.insert(cat);
+                        WeakPoint wp;
+                        wp.category      = cat;
+                        wp.message       = qRec.value(1).toString();
+                        wp.suggestion    = qRec.value(2).toString();
+                        wp.priority      = qRec.value(3).toString();
+                        wp.priorityOrder = (wp.priority == "CRITICAL") ? 1
+                                         : (wp.priority == "HIGH")     ? 2
+                                         : (wp.priority == "MEDIUM")   ? 3 : 4;
+                        weakPoints.append(wp);
                     }
                 }
-                
-                if (foundTime.isEmpty()) continue; // no instructor available
-                
-                WeatherDay wd;
-                wd.date = date;
-                wd.weather = dw;
-                wd.suitability = suitability;
-                wd.sessionType = activeStageStr;
-                wd.timeSlot = foundTime;
-                wd.isPreferredHabit = isPref;
-                wd.instructorId = foundInstId;
-                
-                if (isPref) {
-                    wd.reason = "Matches your usual booking time! " + WeatherService::weatherCodeToDrivingAdvice(dw.weatherCode);
-                } else {
-                    wd.reason = WeatherService::weatherCodeToDrivingAdvice(dw.weatherCode);
-                }
-                
-                days.append(wd);
-                // No hard cap — show all good days within 30-day window
             }
-            
-            // Sort by suitability (best first)
-            std::sort(days.begin(), days.end(), [](const WeatherDay &a, const WeatherDay &b) {
-                if (a.isPreferredHabit != b.isPreferredHabit) return a.isPreferredHabit;
-                return a.suitability > b.suitability;
-            });
-            
-            // Create grid of cards (2 columns)
+
+            // ── Section title ─────────────────────────────────────────────────────
+            {
+                QLabel *recsTitle = new QLabel("🎯 Recommandations personnalisées");
+                recsTitle->setStyleSheet(QString(
+                    "QLabel{color:%1;font-size:22px;font-weight:bold;margin-bottom:10px;}")
+                    .arg(theme->primaryTextColor()));
+                contentLayout->addWidget(recsTitle);
+
+                QString sub = (isCircuit && !weakPoints.isEmpty())
+                    ? QString("Séances ciblées sur vos %1 point(s) faible(s) identifié(s) — combinées avec la météo et vos créneaux préférés").arg(weakPoints.size())
+                    : "Séances optimisées selon météo, créneaux favorables et disponibilités instructeur";
+                QLabel *recsSub = new QLabel(sub);
+                recsSub->setStyleSheet(QString(
+                    "QLabel{color:%1;font-size:13px;font-style:italic;}")
+                    .arg(theme->secondaryTextColor()));
+                contentLayout->addWidget(recsSub);
+            }
+
+            // ── Student preferred time ────────────────────────────────────────────
+            QString prefTime = "10:00:00";
+            { QSqlQuery q;
+              q.prepare("SELECT start_time FROM SESSION_BOOKING WHERE student_id=:id "
+                        "GROUP BY start_time ORDER BY COUNT(*) DESC");
+              q.bindValue(":id", studentId);
+              if (q.exec() && q.next()) prefTime = q.value(0).toString(); }
+            int prefHour = prefTime.left(2).toInt();
+
+            // ── Active instructors ────────────────────────────────────────────────
+            QList<int> instructors;
+            { QSqlQuery q;
+              q.prepare("SELECT id FROM INSTRUCTORS WHERE instructor_status='ACTIVE' AND school_id=:sid");
+              q.bindValue(":sid", schoolId);
+              if (q.exec()) while (q.next()) instructors.append(q.value(0).toInt());
+              if (instructors.isEmpty()) instructors.append(1); }
+
+            // ── Helper: find first available instructor slot on a given date ──────
+            struct WeatherDay {
+                QDate      date;
+                DayWeather weather;
+                int        suitability;
+                QString    sessionType;
+                QString    reason;
+                QString    timeSlot;
+                bool       isPreferredHabit;
+                int        instructorId;
+                int        weakPointIdx;   // index in weakPoints, -1 = general
+            };
+
+            auto dayName = [](int dow) -> QString {
+                switch (dow) {
+                    case 1: return "MONDAY";    case 2: return "TUESDAY";
+                    case 3: return "WEDNESDAY"; case 4: return "THURSDAY";
+                    case 5: return "FRIDAY";    case 6: return "SATURDAY";
+                    default: return "SUNDAY";
+                }
+            };
+
+            auto findSlot = [&](const QDate &date, int prefH, int &outInstId) -> QString {
+                QString dStr = dayName(date.dayOfWeek());
+                QList<int> hours; hours << prefH;
+                for (int h = 9; h <= 16; ++h) if (h != prefH) hours << h;
+                for (int h : hours) {
+                    for (int instId : instructors) {
+                        QSqlQuery qa;
+                        qa.prepare("SELECT start_time FROM AVAILABILITY WHERE instructor_id=:id AND day_of_week=:d AND is_active=1");
+                        qa.bindValue(":id", instId); qa.bindValue(":d", dStr);
+                        bool avail = false;
+                        if (qa.exec()) while (qa.next()) if (qa.value(0).toString().left(2).toInt() == h) avail = true;
+                        if (!avail) continue;
+                        QSqlQuery qb;
+                        qb.prepare("SELECT start_time,end_time FROM SESSION_BOOKING "
+                                   "WHERE instructor_id=:id AND TRUNC(session_date)=:sd "
+                                   "AND status IN('CONFIRMED','COMPLETED')");
+                        qb.bindValue(":id", instId); qb.bindValue(":sd", date);
+                        bool overlap = false;
+                        if (qb.exec()) while (qb.next()) {
+                            int sH = qb.value(0).toString().left(2).toInt();
+                            int eH = qb.value(1).toString().left(2).toInt();
+                            if (h >= sH && h < eH) overlap = true;
+                            if (sH == h) overlap = true;
+                        }
+                        if (!overlap) { outInstId = instId; return QString("%1:00").arg(h,2,10,QChar('0')); }
+                    }
+                }
+                return {};
+            };
+
+            // ── Build recommendation day slots ────────────────────────────────────
+            QList<WeatherDay> days;
+
+            if (isCircuit && !weakPoints.isEmpty()) {
+                // One best-weather slot per unique weak point
+                for (int wi = 0; wi < weakPoints.size(); ++wi) {
+                    WeatherDay best; best.weakPointIdx = wi; best.suitability = -1;
+                    for (int i = 1; i <= 30; ++i) {
+                        QDate d = QDate::currentDate().addDays(i);
+                        DayWeather dw = weather->getWeather(d);
+                        if (dw.weatherCode < 0) continue;
+                        int suit = WeatherService::weatherCodeToSuitability(dw.weatherCode);
+                        if (suit < 50 || suit <= best.suitability) continue;
+                        // Don't reuse a date already assigned to another weak point
+                        bool taken = false;
+                        for (const WeatherDay &x : days) if (x.date == d) { taken = true; break; }
+                        if (taken) continue;
+                        int instId = instructors.first();
+                        QString slot = findSlot(d, prefHour, instId);
+                        if (slot.isEmpty()) continue;
+                        best.date = d; best.weather = dw; best.suitability = suit;
+                        best.sessionType = activeStageStr; best.timeSlot = slot;
+                        best.isPreferredHabit = (slot.left(2).toInt() == prefHour);
+                        best.instructorId = instId;
+                        best.reason = QString("Focus : %1. %2")
+                            .arg(weakPoints[wi].category,
+                                 WeatherService::weatherCodeToDrivingAdvice(dw.weatherCode));
+                    }
+                    if (best.suitability >= 0) days.append(best);
+                }
+                // Complement with up to 2 general good-weather slots
+                int extras = 0;
+                for (int i = 1; i <= 30 && extras < 2; ++i) {
+                    QDate d = QDate::currentDate().addDays(i);
+                    DayWeather dw = weather->getWeather(d);
+                    if (dw.weatherCode < 0) continue;
+                    int suit = WeatherService::weatherCodeToSuitability(dw.weatherCode);
+                    if (suit < 70) continue;
+                    bool taken = false;
+                    for (const WeatherDay &x : days) if (x.date == d) { taken = true; break; }
+                    if (taken) continue;
+                    int instId = instructors.first();
+                    QString slot = findSlot(d, prefHour, instId);
+                    if (slot.isEmpty()) continue;
+                    WeatherDay wd; wd.date = d; wd.weather = dw; wd.suitability = suit;
+                    wd.sessionType = activeStageStr; wd.timeSlot = slot;
+                    wd.isPreferredHabit = (slot.left(2).toInt() == prefHour);
+                    wd.instructorId = instId; wd.weakPointIdx = -1;
+                    wd.reason = (wd.isPreferredHabit
+                        ? "Correspond à vos créneaux habituels ! "
+                        : QString()) + WeatherService::weatherCodeToDrivingAdvice(dw.weatherCode);
+                    days.append(wd); ++extras;
+                }
+            } else {
+                // Standard logic: Code Theory, Parking, or Circuit without prior sessions
+                for (int i = 1; i <= 30; ++i) {
+                    QDate d = QDate::currentDate().addDays(i);
+                    DayWeather dw = weather->getWeather(d);
+                    if (dw.weatherCode < 0) continue;
+                    int suit = WeatherService::weatherCodeToSuitability(dw.weatherCode);
+                    if (suit < 50) continue;
+                    int instId = instructors.first();
+                    QString slot = findSlot(d, prefHour, instId);
+                    if (slot.isEmpty()) continue;
+                    WeatherDay wd; wd.date = d; wd.weather = dw; wd.suitability = suit;
+                    wd.sessionType = activeStageStr; wd.timeSlot = slot;
+                    wd.isPreferredHabit = (slot.left(2).toInt() == prefHour);
+                    wd.instructorId = instId; wd.weakPointIdx = -1;
+                    wd.reason = (wd.isPreferredHabit
+                        ? "Correspond à vos créneaux habituels ! "
+                        : QString()) + WeatherService::weatherCodeToDrivingAdvice(dw.weatherCode);
+                    days.append(wd);
+                }
+                std::sort(days.begin(), days.end(), [](const WeatherDay &a, const WeatherDay &b) {
+                    if (a.isPreferredHabit != b.isPreferredHabit) return a.isPreferredHabit;
+                    return a.suitability > b.suitability;
+                });
+            }
+
+            // ── Render grid (2 columns) ───────────────────────────────────────────
             QGridLayout *gridLayout = new QGridLayout();
             gridLayout->setSpacing(20);
             gridLayout->setColumnStretch(0, 1);
             gridLayout->setColumnStretch(1, 1);
-            
-            for (int i = 0; i < days.size(); i++) {
+
+            for (int i = 0; i < days.size(); ++i) {
                 const WeatherDay &wd = days[i];
+                const WeakPoint  *wp = (wd.weakPointIdx >= 0 && wd.weakPointIdx < weakPoints.size())
+                                       ? &weakPoints[wd.weakPointIdx] : nullptr;
                 gridLayout->addWidget(
-                    createWeatherRecommendationCard(wd.date, wd.weather, QString("%1 (%2)").arg(wd.sessionType, wd.timeSlot), wd.reason, wd.instructorId),
+                    createWeatherRecommendationCard(
+                        wd.date, wd.weather,
+                        QString("%1 (%2)").arg(wd.sessionType, wd.timeSlot),
+                        wd.reason, wd.instructorId,
+                        wp ? wp->category   : QString(),
+                        wp ? wp->message    : QString(),
+                        wp ? wp->suggestion : QString(),
+                        wp ? wp->priority   : QString()
+                    ),
                     i / 2, i % 2
                 );
             }
-            
+
             if (days.isEmpty()) {
-                QLabel *noRecs = new QLabel("No available slots found with good weather in the next 30 days.");
-                noRecs->setStyleSheet(QString("color: %1; font-size: 14px;").arg(theme->secondaryTextColor()));
+                QLabel *noRecs = new QLabel("Aucun créneau disponible avec une météo favorable dans les 30 prochains jours.");
+                noRecs->setStyleSheet(QString("QLabel{color:%1;font-size:14px;}").arg(theme->secondaryTextColor()));
                 gridLayout->addWidget(noRecs, 0, 0);
             }
 
-            // Add grid directly to contentLayout (outer scroll area already handles page scrolling)
             contentLayout->addLayout(gridLayout);
             
         } else {
@@ -481,8 +560,14 @@ void AIRecommendations::updateColors()
 }
 
 QWidget* AIRecommendations::createWeatherRecommendationCard(const QDate& date, const DayWeather& weather,
-                                                             const QString& sessionType, const QString& reason, int instructorId)
+                                                             const QString& sessionType, const QString& reason,
+                                                             int instructorId,
+                                                             const QString& weakCategory,
+                                                             const QString& weakMessage,
+                                                             const QString& weakSuggestion,
+                                                             const QString& weakPriority)
 {
+    const bool hasWeakPoint = !weakCategory.isEmpty();
     ThemeManager* theme = ThemeManager::instance();
     bool isDark = theme->currentTheme() == ThemeManager::Dark;
     int suitability = WeatherService::weatherCodeToSuitability(weather.weatherCode);
@@ -633,14 +718,89 @@ QWidget* AIRecommendations::createWeatherRecommendationCard(const QDate& date, c
     );
     layout->addWidget(suitBar);
     
-    // ── AI Driving Advice ──
+    // ── Weather driving advice ──
     QLabel *reasonLabel = new QLabel(QString("💡 %1").arg(reason));
-    reasonLabel->setStyleSheet(
-        QString("QLabel { color: %1; font-size: 12px; border: none; font-style: italic; }").arg(theme->mutedTextColor())
-    );
+    reasonLabel->setStyleSheet(QString(
+        "QLabel { color: %1; font-size: 12px; border: none; font-style: italic; }")
+        .arg(theme->mutedTextColor()));
     reasonLabel->setWordWrap(true);
     layout->addWidget(reasonLabel);
-    
+
+    // ── Circuit weak point block (only shown when linked to a recommendation) ──
+    if (hasWeakPoint) {
+        // Priority badge colours
+        QString priBg, priColor, priLabel;
+        if (weakPriority == "CRITICAL") {
+            priBg    = isDark ? "#450A0A" : "#FEE2E2";
+            priColor = isDark ? "#F87171" : "#DC2626";
+            priLabel = "🔴 CRITIQUE";
+        } else if (weakPriority == "HIGH") {
+            priBg    = isDark ? "#422006" : "#FFF7ED";
+            priColor = isDark ? "#FBBF24" : "#EA580C";
+            priLabel = "🟠 PRIORITAIRE";
+        } else {
+            priBg    = isDark ? "#1E3A5F" : "#EFF6FF";
+            priColor = isDark ? "#60A5FA" : "#2563EB";
+            priLabel = "🔵 À AMÉLIORER";
+        }
+
+        QFrame *wpBox = new QFrame();
+        wpBox->setStyleSheet(QString(
+            "QFrame { background-color: %1; border: 1px solid %2;"
+            "         border-left: 4px solid %2; border-radius: 8px; }")
+            .arg(priBg, priColor));
+        QVBoxLayout *wpLay = new QVBoxLayout(wpBox);
+        wpLay->setContentsMargins(12, 10, 12, 10);
+        wpLay->setSpacing(6);
+
+        // Header row: category + priority badge
+        QHBoxLayout *wpHeader = new QHBoxLayout(); wpHeader->setSpacing(8);
+        QLabel *wpCat = new QLabel(QString("🎯 Point faible : %1").arg(weakCategory));
+        wpCat->setStyleSheet(QString(
+            "QLabel{color:%1;font-size:13px;font-weight:bold;border:none;background:transparent;}")
+            .arg(priColor));
+        QLabel *wpBadge = new QLabel(priLabel);
+        wpBadge->setStyleSheet(QString(
+            "QLabel{color:%1;font-size:10px;font-weight:bold;background-color:%2;"
+            "padding:3px 8px;border-radius:6px;border:none;}")
+            .arg(priColor, priBg));
+        wpHeader->addWidget(wpCat, 1);
+        wpHeader->addWidget(wpBadge);
+        wpLay->addLayout(wpHeader);
+
+        // Message (observation from instructor/AI)
+        if (!weakMessage.isEmpty()) {
+            QLabel *wpMsg = new QLabel(weakMessage);
+            wpMsg->setWordWrap(true);
+            wpMsg->setStyleSheet(QString(
+                "QLabel{color:%1;font-size:12px;border:none;background:transparent;}")
+                .arg(theme->secondaryTextColor()));
+            wpLay->addWidget(wpMsg);
+        }
+
+        // Suggestion (actionable advice)
+        if (!weakSuggestion.isEmpty()) {
+            QFrame *sugBox = new QFrame();
+            sugBox->setStyleSheet(QString(
+                "QFrame{background-color:%1;border-radius:6px;border:none;}")
+                .arg(isDark ? "#1E293B" : "#F9FAFB"));
+            QHBoxLayout *sugLay = new QHBoxLayout(sugBox);
+            sugLay->setContentsMargins(8, 6, 8, 6); sugLay->setSpacing(6);
+            QLabel *bulb = new QLabel("✏️");
+            bulb->setStyleSheet("font-size:13px;border:none;background:transparent;");
+            QLabel *wpSug = new QLabel(weakSuggestion);
+            wpSug->setWordWrap(true);
+            wpSug->setStyleSheet(QString(
+                "QLabel{color:%1;font-size:12px;font-style:italic;border:none;background:transparent;}")
+                .arg(theme->primaryTextColor()));
+            sugLay->addWidget(bulb);
+            sugLay->addWidget(wpSug, 1);
+            wpLay->addWidget(sugBox);
+        }
+
+        layout->addWidget(wpBox);
+    }
+
     // ── Book button (only if suitability > 20) ──
     if (suitability > 20) {
         QPushButton *bookBtn = new QPushButton(suitability >= 60 ? "Book This Session" : "Book Anyway (Caution)");

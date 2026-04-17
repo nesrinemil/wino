@@ -1,7 +1,7 @@
 #ifndef AIRECOMMENDATIONS_H
 #define AIRECOMMENDATIONS_H
 
-#include <QDialog>
+#include <QWidget>
 #include <QLabel>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -9,13 +9,16 @@
 
 
 
-class AIRecommendations : public QDialog
+class AIRecommendations : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit AIRecommendations(QWidget *parent = nullptr);
     ~AIRecommendations();
+
+    // Re-render the recommendation cards (call when navigating to the page)
+    void refreshContent();
 
 private:
 
@@ -29,7 +32,12 @@ private:
                                                const QString& icon, const QString& color);
     QWidget* createSkillBar(const QString& skillName, int score);
     QWidget* createWeatherRecommendationCard(const QDate& date, const DayWeather& weather,
-                                             const QString& sessionType, const QString& reason, int instructorId);
+                                             const QString& sessionType, const QString& reason,
+                                             int instructorId,
+                                             const QString& weakCategory   = QString(),
+                                             const QString& weakMessage    = QString(),
+                                             const QString& weakSuggestion = QString(),
+                                             const QString& weakPriority   = QString());
     void updateColors();
 
 public slots:
@@ -37,6 +45,7 @@ public slots:
 
 signals:
     void sessionBooked();
+    void backRequested();   // emitted when the user clicks "← Back to Dashboard"
 
 private slots:
     void onThemeChanged();

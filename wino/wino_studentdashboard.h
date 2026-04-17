@@ -1,7 +1,6 @@
 #ifndef WINO_STUDENTDASHBOARD_H
 #define WINO_STUDENTDASHBOARD_H
 
-#include <QMainWindow>
 #include <QWidget>
 #include <QPushButton>
 #include <QLabel>
@@ -10,6 +9,8 @@
 #include <QFrame>
 #include <QDialog>
 #include <QLineEdit>
+#include <QComboBox>
+#include <QScrollArea>
 #include <QMessageBox>
 #include <QClipboard>
 #include <QApplication>
@@ -20,9 +21,11 @@
 #include <QTime>
 #include <QList>
 #include "weatherservice.h"
+#include "airecommendations.h"
 #include <QPrinter>
 #include <QPainter>
 #include <QFileDialog>
+#include <QStackedWidget>
 
 // Structure pour représenter une séance
 struct Session {
@@ -34,7 +37,7 @@ struct Session {
     QString instructor;
 };
 
-class WinoStudentDashboard : public QMainWindow
+class WinoStudentDashboard : public QWidget
 {
     Q_OBJECT
 
@@ -70,14 +73,25 @@ private:
     void showSessionDialog(Session &session);
     void editSession(Session &session);
     void deleteSession(int sessionId);
-    void showExamRequestDialog(int examStep);
-    
+    void showExamRequestDialog(int examStep);   // kept for legacy; now routes to page
+    QWidget* createExamPage();
+    void refreshExamPage();
+
     // Membres
     QCalendarWidget *calendarWidget;
     QList<Session> sessions;
     QPushButton* themeToggleBtn;
     QPushButton* examBtn;
-    QWidget* centralWidget;
+    QWidget* centralWidget;           // the dashboard page (stack index 0)
+
+    // ── Embedded page navigation ─────────────────────────────────────────────
+    QStackedWidget    *m_mainStack  = nullptr;  // 0=dashboard, 1=AI, 2=Exam
+    AIRecommendations *m_aiPage     = nullptr;
+    QWidget           *m_examPage       = nullptr;
+    QVBoxLayout       *m_examBodyLayout = nullptr; // refreshable inner layout
+    QWidget           *m_examTopBar     = nullptr; // for theme updates
+    QScrollArea       *m_examScroll     = nullptr; // for theme updates
+    QWidget           *m_examBodyWidget = nullptr; // for theme updates
 };
 
 #endif // WINO_STUDENTDASHBOARD_H

@@ -41,7 +41,6 @@ SOURCES += \
     ../9/circularprogressbar.cpp \
     ../9/sectioncard.cpp \
     ../9/animatedstackedwidget.cpp \
-    ../9/twiliowhatsapp.cpp \
     ../9/trafficsignwidget.cpp
 
 HEADERS += \
@@ -54,7 +53,6 @@ HEADERS += \
     ../9/circularprogressbar.h \
     ../9/sectioncard.h \
     ../9/animatedstackedwidget.h \
-    ../9/twiliowhatsapp.h \
     ../9/trafficsignwidget.h
 
 # Make TACHE headers findable by their short names

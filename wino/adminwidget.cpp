@@ -1,4 +1,5 @@
 ﻿#include "adminwidget.h"
+#include "thememanager.h"
 #include "parkingdbmanager.h"
 #include <QGraphicsDropShadowEffect>
 #include <QHeaderView>
@@ -11,6 +12,7 @@
 #include <QDateTime>
 #include <QPainter>
 #include <QScrollBar>
+#include <QCoreApplication>
 
 // ═══════════════════════════════════════════════════════════════
 //  MODERN ADMIN DESIGN SYSTEM
@@ -102,9 +104,10 @@ static QGraphicsDropShadowEffect* shadow(QWidget *p, int blur=16, int alpha=15) 
 //  CONSTRUCTOR
 // ═══════════════════════════════════════════════════════════════
 
-AdminWidget::AdminWidget(const QString &userName, const QString &userRole, QWidget *parent)
+AdminWidget::AdminWidget(const QString &userName, const QString &userRole,
+                         int instructorId, QWidget *parent)
     : QWidget(parent), m_userName(userName), m_userRole(userRole),
-      m_isMoniteur(userRole == "Moniteur"),
+      m_isMoniteur(userRole == "Moniteur"), m_instructorId(instructorId),
       m_kpiEleves(nullptr), m_kpiVehiculesSub(nullptr), m_kpiSessions(nullptr),
       m_kpiTaux(nullptr), m_kpiRevenu(nullptr),
       m_kpiMoniteurs(nullptr), m_kpiMoniteursSub(nullptr),
@@ -112,6 +115,7 @@ AdminWidget::AdminWidget(const QString &userName, const QString &userRole, QWidg
       m_examSlotsTable(nullptr), m_maneuverStepsTable(nullptr), m_examResultsTable(nullptr)
 {
     setupUI();
+    applyTheme();   // initial paint matches current theme
     refreshAll();
 }
 
@@ -127,17 +131,84 @@ void AdminWidget::setupUI()
 
     // Pages
     m_pages = new QStackedWidget(this);
-    m_pages->addWidget(createDashboardPage());      // 0
-    m_pages->addWidget(createMoniteursPage());       // 1
-    m_pages->addWidget(createElevesPage());          // 2
-    m_pages->addWidget(createVehiculesPage());       // 3
-    m_pages->addWidget(createSessionsPage());        // 4
-    m_pages->addWidget(createReservationsPage());    // 5
-    m_pages->addWidget(createVideosPage());          // 6
-    m_pages->addWidget(createExamSessionsPage());    // 7
-    m_pages->addWidget(createManeuverStepsPage());   // 8
-    m_pages->addWidget(createExamResultsPage());     // 9
+    m_pages->addWidget(createDashboardPage());         // 0
+    m_pages->addWidget(createMoniteursPage());          // 1
+    m_pages->addWidget(createElevesPage());             // 2
+    m_pages->addWidget(createVehiculesPage());          // 3
+    m_pages->addWidget(createSessionsPage());           // 4
+    m_pages->addWidget(createReservationsPage());       // 5
+    m_pages->addWidget(createVideosPage());             // 6
+    m_pages->addWidget(createExamSessionsPage());       // 7
+    m_pages->addWidget(createManeuverStepsPage());      // 8
+    m_pages->addWidget(createExamResultsPage());        // 9
+    m_pages->addWidget(createParkingStudentsPage());    // 10 — instructor: parking-step students (Oracle)
     main->addWidget(m_pages, 1);
+
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &AdminWidget::applyTheme);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  THEME
+// ═══════════════════════════════════════════════════════════════
+
+void AdminWidget::applyTheme()
+{
+    if (!m_banner) return;
+    bool isDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+
+    // ── Banner ────────────────────────────────────────────────────────────────
+    if (isDark) {
+        m_banner->setStyleSheet(
+            "QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+            "stop:0 #1E293B,stop:0.5 #334155,stop:1 #1E293B);border:none;}");
+    } else {
+        m_banner->setStyleSheet(
+            "QFrame{background:#14B8A6;border:none;}");
+    }
+
+    // ── Full content: light ↔ dark color token replacement ────────────────────
+    // Maps { light-hex , dark-hex }
+    using SS = QPair<QString,QString>;
+    static const QVector<SS> palette = {
+        // backgrounds
+        { "#f0f2f5",  "#0F172A" },
+        { "#f8f9fa",  "#111827" },
+        { "#ffffff",  "#1F2937" },
+        { "white",    "#1F2937" },
+        // card/panel borders
+        { "#e8e8e8",  "#374151" },
+        { "#e2e8f0",  "#374151" },
+        { "#dee2e6",  "#374151" },
+        { "#edf2f7",  "#1F2937" },
+        // text
+        { "color:#2d3436", "color:#E5E7EB" },
+        { "color: #2d3436","color: #E5E7EB"},
+        { "color:#636e72", "color:#94A3B8" },
+        { "color: #636e72","color: #94A3B8"},
+        { "color:#495057", "color:#CBD5E1" },
+        { "color:#343a40", "color:#E2E8F0" },
+        { "color:#212529", "color:#F1F5F9" },
+        // scrollbars
+        { "background:#ccc",     "background:#374151" },
+        { "background:#d0d5db",  "background:#4B5563" },
+    };
+
+    QList<QWidget*> widgets = this->findChildren<QWidget*>();
+    widgets.prepend(this);
+    for (QWidget *w : widgets) {
+        // Never touch the banner — it has its own logic above
+        if (w == m_banner) continue;
+        QString ss = w->styleSheet();
+        if (ss.isEmpty()) continue;
+        for (const auto &p : palette) {
+            if (isDark)
+                ss.replace(p.first,  p.second, Qt::CaseInsensitive);
+            else
+                ss.replace(p.second, p.first,  Qt::CaseInsensitive);
+        }
+        w->setStyleSheet(ss);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -147,6 +218,7 @@ void AdminWidget::setupUI()
 QWidget* AdminWidget::createBanner()
 {
     QFrame *b = new QFrame(this);
+    m_banner = b;
     b->setFixedHeight(80);
     b->setStyleSheet(
         "QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
@@ -161,11 +233,17 @@ QWidget* AdminWidget::createBanner()
 
     QVBoxLayout *titleCol = new QVBoxLayout();
     titleCol->setSpacing(2);
-    QLabel *t = new QLabel("ADMINISTRATION", b);
+    QLabel *t = new QLabel(m_isMoniteur
+        ? QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f  PARKING")
+        : "ADMINISTRATION", b);
     t->setStyleSheet("QLabel{font-size:18px;font-weight:bold;color:white;"
         "letter-spacing:4px;background:transparent;border:none;}");
     titleCol->addWidget(t);
-    QLabel *sub = new QLabel(QString::fromUtf8("Control Panel · Wino Driving School"), b);
+    QLabel *sub = new QLabel(
+        m_isMoniteur
+            ? QString::fromUtf8("Gestion Parking · Wino Driving School")
+            : QString::fromUtf8("Control Panel · Wino Driving School"),
+        b);
     sub->setStyleSheet("QLabel{font-size:11px;color:rgba(255,255,255,0.7);"
         "background:transparent;border:none;}");
     titleCol->addWidget(sub);
@@ -290,32 +368,52 @@ QWidget* AdminWidget::createNavBar()
     hl->setContentsMargins(28,8,28,8);
     hl->setSpacing(8);
 
-    QStringList tabs = {
-        QString::fromUtf8("📊 Dashboard"),
-        QString::fromUtf8("🧑‍🏫 Moniteurs"),
-        QString::fromUtf8("\xf0\x9f\x91\xa5 Students"),
-        QString::fromUtf8("🚗 Vehicles"),
-        QString::fromUtf8("📋 Sessions"),
-        QString::fromUtf8("📅 Reservations"),
-        QString::fromUtf8("\xf0\x9f\x8e\xac Videos"),
-        QString::fromUtf8("🗓 Exam Sessions"),
-        QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Steps"),
-        QString::fromUtf8("\xf0\x9f\x8f\x86 Exam Results")
+    // All possible tabs: label → page index in m_pages
+    struct NavEntry { QString label; int pageIdx; };
+    const QList<NavEntry> allTabs = {
+        { QString::fromUtf8("📊 Dashboard"),          0 },
+        { QString::fromUtf8("🧑‍🏫 Moniteurs"),       1 },
+        { QString::fromUtf8("\xf0\x9f\x91\xa5 Students"), 2 },
+        { QString::fromUtf8("🚗 Vehicles"),            3 },
+        { QString::fromUtf8("📋 Sessions"),            4 },
+        { QString::fromUtf8("📅 Reservations"),        5 },
+        { QString::fromUtf8("\xf0\x9f\x8e\xac Videos"), 6 },
+        { QString::fromUtf8("🗓 Exam Sessions"),       7 },
+        { QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Steps"), 8 },
+        { QString::fromUtf8("\xf0\x9f\x8f\x86 Exam Results"), 9 },
+        // Index 10 — parking-phase students, instructor view (Oracle)
+        { QString::fromUtf8("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x8e\x93 \xc3\x89tudiants Parking"), 10 },
     };
 
-    for (int i = 0; i < tabs.size(); i++) {
-        QPushButton *btn = new QPushButton(tabs[i], bar);
+    // For the instructor/moniteur role, show only relevant pages;
+    // hide the parking-management tabs (Moniteurs/Students/Vehicles/Sessions/Reservations)
+    // and replace them with the "Étudiants Parking" view.
+    const QSet<int> hiddenForMoniteur = { 1, 2, 3, 4, 5, 7 };
+
+    QString btnSS =
+        "QPushButton{background:white;color:" + DIM + ";border:1px solid " + BORDER + ";"
+        "border-radius:12px;padding:6px 16px;font-size:11px;font-weight:bold;}"
+        "QPushButton:hover{background:#e8f8f5;border-color:" + GREEN + ";color:" + GREEN + ";}"
+        "QPushButton:checked{background:" + GREEN + ";color:white;border-color:" + GREEN + ";}";
+
+    // Page 10 is only visible for the moniteur/instructor role
+    const QSet<int> shownOnlyForMoniteur = { 10 };
+
+    for (const NavEntry &e : allTabs) {
+        // Skip admin-only tabs when in moniteur/instructor mode
+        if (m_isMoniteur && hiddenForMoniteur.contains(e.pageIdx)) continue;
+        // Skip moniteur-only tabs when in admin mode
+        if (!m_isMoniteur && shownOnlyForMoniteur.contains(e.pageIdx)) continue;
+
+        QPushButton *btn = new QPushButton(e.label, bar);
+        btn->setProperty("pageIndex", e.pageIdx);
         btn->setCursor(Qt::PointingHandCursor);
         btn->setCheckable(true);
-        btn->setAutoExclusive(false); // Bug 3 fix: on gère l'état manuellement
-        btn->setChecked(i == 0);
-        btn->setStyleSheet(
-            "QPushButton{background:white;color:" + DIM + ";border:1px solid " + BORDER + ";"
-            "border-radius:12px;padding:6px 16px;font-size:11px;font-weight:bold;}"
-            "QPushButton:hover{background:#e8f8f5;border-color:" + GREEN + ";color:" + GREEN + ";}"
-            "QPushButton:checked{background:" + GREEN + ";color:white;border-color:" + GREEN + ";}");
-        connect(btn, &QPushButton::clicked, this, [this, i]() {
-            navigateTo(i); // navigateTo gère le checked de tous les boutons
+        btn->setAutoExclusive(false);
+        btn->setChecked(e.pageIdx == 0);
+        btn->setStyleSheet(btnSS);
+        connect(btn, &QPushButton::clicked, this, [this, e]() {
+            navigateTo(e.pageIdx);
         });
         hl->addWidget(btn);
         m_navBtns.append(btn);
@@ -338,14 +436,13 @@ QWidget* AdminWidget::createNavBar()
 
 void AdminWidget::navigateTo(int page)
 {
-    for (int i = 0; i < m_navBtns.size(); i++) {
-        // Bug 3 fix: bloquer les signaux pour éviter le double-toggle Qt
-        m_navBtns[i]->blockSignals(true);
-        m_navBtns[i]->setChecked(i == page);
-        m_navBtns[i]->blockSignals(false);
+    // Match buttons by their stored pageIndex property, not by vector position
+    for (QPushButton *btn : m_navBtns) {
+        btn->blockSignals(true);
+        btn->setChecked(btn->property("pageIndex").toInt() == page);
+        btn->blockSignals(false);
     }
     m_pages->setCurrentIndex(page);
-    
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -720,7 +817,40 @@ QWidget* AdminWidget::createElevesPage()
 
 void AdminWidget::refreshElevesTable()
 {
-    auto eleves = ParkingDBManager::instance().getAllEleves();
+    // Build student list — filtered by instructor when role is Moniteur
+    QList<QVariantMap> eleves;
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        if (m_isMoniteur && m_instructorId > 0) {
+            q.prepare(
+                "SELECT s.id, s.last_name AS nom, s.first_name AS prenom, "
+                "s.phone AS telephone, s.email, "
+                "s.license_number AS numero_permis, "
+                "s.enrollment_date AS date_inscription, s.student_status "
+                "FROM STUDENTS s "
+                "JOIN students sm ON UPPER(sm.email) = UPPER(s.email) "
+                "WHERE s.student_status = 'ACTIVE' "
+                "  AND sm.instructor_id = :iid "
+                "  AND sm.status = 'approved' "
+                "ORDER BY s.last_name"
+            );
+            q.bindValue(":iid", m_instructorId);
+        } else {
+            q.prepare(
+                "SELECT id, last_name AS nom, first_name AS prenom, "
+                "phone AS telephone, email, license_number AS numero_permis, "
+                "enrollment_date AS date_inscription, student_status "
+                "FROM STUDENTS WHERE student_status='ACTIVE' ORDER BY last_name"
+            );
+        }
+        q.exec();
+        while (q.next()) {
+            QVariantMap map;
+            for (int i = 0; i < q.record().count(); i++)
+                map[q.record().fieldName(i).toLower()] = q.value(i);
+            eleves.append(map);
+        }
+    }
     auto &db = ParkingDBManager::instance();
     m_elevesTable->setRowCount(eleves.size());
 
@@ -1014,6 +1144,7 @@ QWidget* AdminWidget::createVehiculesPage()
 
 void AdminWidget::refreshVehiculesTable()
 {
+    // Parking cars are shared school resources — always show all of them
     QSqlQuery q("SELECT id, plate_number AS immatriculation, "
                 "NVL(brand,' ') || ' ' || NVL(model,' ') AS modele, "
                 "assistance_type AS type_assistance, "
@@ -1258,19 +1389,44 @@ QWidget* AdminWidget::createSessionsPage()
 
 void AdminWidget::refreshSessionsTable()
 {
-    QSqlQuery q("SELECT * FROM ("
-                "SELECT s.session_id AS id, s.student_id AS eleve_id, s.car_id AS vehicule_id, "
-                "s.maneuver_type AS manoeuvre_type, s.session_start AS date_debut, "
-                "s.session_end AS date_fin, s.duration_seconds AS duree_secondes, "
-                "s.is_exam_mode AS mode_examen, s.is_successful AS reussi, "
-                "s.error_count AS nb_erreurs, s.stall_count AS nb_calages, "
-                "e.first_name AS prenom, e.last_name AS nom, "
-                "NVL(c.brand,' ') || ' ' || NVL(c.model,' ') AS modele, "
-                "NVL(c.session_fee, 0) AS session_fee "
-                "FROM PARKING_SESSIONS s "
-                "LEFT JOIN STUDENTS e ON s.student_id=e.id "
-                "LEFT JOIN CARS c ON s.car_id=c.id "
-                "ORDER BY s.session_start DESC) WHERE ROWNUM <= 100");
+    QSqlQuery q(QSqlDatabase::database());
+    if (m_isMoniteur && m_instructorId > 0) {
+        q.prepare(
+            "SELECT * FROM ("
+            "SELECT s.session_id AS id, s.student_id AS eleve_id, s.car_id AS vehicule_id, "
+            "s.maneuver_type AS manoeuvre_type, s.session_start AS date_debut, "
+            "s.session_end AS date_fin, s.duration_seconds AS duree_secondes, "
+            "s.is_exam_mode AS mode_examen, s.is_successful AS reussi, "
+            "s.error_count AS nb_erreurs, s.stall_count AS nb_calages, "
+            "e.first_name AS prenom, e.last_name AS nom, "
+            "NVL(c.brand,' ') || ' ' || NVL(c.model,' ') AS modele, "
+            "NVL(c.session_fee, 0) AS session_fee "
+            "FROM PARKING_SESSIONS s "
+            "LEFT JOIN STUDENTS e ON s.student_id = e.id "
+            "JOIN students sm ON UPPER(sm.email) = UPPER(e.email) "
+            "LEFT JOIN CARS c ON s.car_id = c.id "
+            "WHERE sm.instructor_id = :iid AND sm.status = 'approved' "
+            "ORDER BY s.session_start DESC) WHERE ROWNUM <= 100"
+        );
+        q.bindValue(":iid", m_instructorId);
+    } else {
+        q.prepare(
+            "SELECT * FROM ("
+            "SELECT s.session_id AS id, s.student_id AS eleve_id, s.car_id AS vehicule_id, "
+            "s.maneuver_type AS manoeuvre_type, s.session_start AS date_debut, "
+            "s.session_end AS date_fin, s.duration_seconds AS duree_secondes, "
+            "s.is_exam_mode AS mode_examen, s.is_successful AS reussi, "
+            "s.error_count AS nb_erreurs, s.stall_count AS nb_calages, "
+            "e.first_name AS prenom, e.last_name AS nom, "
+            "NVL(c.brand,' ') || ' ' || NVL(c.model,' ') AS modele, "
+            "NVL(c.session_fee, 0) AS session_fee "
+            "FROM PARKING_SESSIONS s "
+            "LEFT JOIN STUDENTS e ON s.student_id=e.id "
+            "LEFT JOIN CARS c ON s.car_id=c.id "
+            "ORDER BY s.session_start DESC) WHERE ROWNUM <= 100"
+        );
+    }
+    q.exec();
 
     QList<QVariantMap> sessions;
     while (q.next()) {
@@ -1385,7 +1541,36 @@ void AdminWidget::refreshSessionsTable()
             delete it;
         }
 
-        auto eleves = ParkingDBManager::instance().getAllEleves();
+        // Fetch students — filtered by instructor when role is Moniteur
+        QList<QVariantMap> eleves;
+        {
+            QSqlQuery qe(QSqlDatabase::database());
+            if (m_isMoniteur && m_instructorId > 0) {
+                qe.prepare(
+                    "SELECT s.id, s.last_name AS nom, s.first_name AS prenom "
+                    "FROM STUDENTS s "
+                    "JOIN students sm ON UPPER(sm.email) = UPPER(s.email) "
+                    "WHERE s.student_status = 'ACTIVE' "
+                    "  AND sm.instructor_id = :iid "
+                    "  AND sm.status = 'approved' "
+                    "ORDER BY s.last_name"
+                );
+                qe.bindValue(":iid", m_instructorId);
+            } else {
+                qe.prepare(
+                    "SELECT id, last_name AS nom, first_name AS prenom "
+                    "FROM STUDENTS WHERE student_status='ACTIVE' ORDER BY last_name"
+                );
+            }
+            qe.exec();
+            while (qe.next()) {
+                QVariantMap map;
+                for (int i = 0; i < qe.record().count(); i++)
+                    map[qe.record().fieldName(i).toLower()] = qe.value(i);
+                eleves.append(map);
+            }
+        }
+
         struct StudentRank { int id; QString name; double taux; int sessions; };
         QList<StudentRank> ranked;
         for (const auto &e : eleves) {
@@ -1399,8 +1584,11 @@ void AdminWidget::refreshSessionsTable()
             return a.taux > b.taux;
         });
 
-        QStringList medals = {QString::fromUtf8("🥇"), QString::fromUtf8("🥈"), QString::fromUtf8("🥉"), "4.", "5."};
-        for (int i = 0; i < qMin(5, ranked.size()); i++) {
+        // Build medal labels dynamically (no hard cap)
+        QStringList medals = {QString::fromUtf8("🥇"), QString::fromUtf8("🥈"), QString::fromUtf8("🥉")};
+        while (medals.size() < ranked.size())
+            medals.append(QString("%1.").arg(medals.size() + 1));
+        for (int i = 0; i < ranked.size(); i++) {
             QFrame *row = new QFrame();
             row->setStyleSheet("QFrame{background:#f8f9fa;border-radius:8px;border:none;}");
             row->setFixedHeight(36);
@@ -1554,7 +1742,21 @@ void AdminWidget::refreshReservationsTable()
     // Revenue KPI
     if (m_kpiRevenu) {
         double total = 0;
-        QSqlQuery rq("SELECT NVL(SUM(c.session_fee),0) FROM PARKING_SESSIONS s JOIN CARS c ON s.car_id=c.id");
+        QSqlQuery rq(QSqlDatabase::database());
+        if (m_isMoniteur && m_instructorId > 0) {
+            rq.prepare(
+                "SELECT NVL(SUM(c.session_fee),0) "
+                "FROM PARKING_SESSIONS s "
+                "JOIN CARS c ON s.car_id=c.id "
+                "JOIN STUDENTS e ON s.student_id=e.id "
+                "JOIN students sm ON UPPER(sm.email)=UPPER(e.email) "
+                "WHERE sm.instructor_id=:iid AND sm.status='approved'"
+            );
+            rq.bindValue(":iid", m_instructorId);
+        } else {
+            rq.prepare("SELECT NVL(SUM(c.session_fee),0) FROM PARKING_SESSIONS s JOIN CARS c ON s.car_id=c.id");
+        }
+        rq.exec();
         if (rq.next()) total = rq.value(0).toDouble();
         m_kpiRevenu->setText(QString("%1 DT").arg(total, 0, 'f', 0));
         if (m_kpiRevenuSub)
@@ -2615,10 +2817,197 @@ void AdminWidget::deleteExamResult(int resultId)
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         bool ok = ParkingDBManager::instance().deleteExamResult(resultId);
         if (ok) {
-            
+
             refreshExamResultsTable();
         } else {
             QMessageBox::critical(this, "Error", QString::fromUtf8("Impossible de supprimer le r\xe9sultat."));
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page 10 — Étudiants Parking (Oracle-based, instructor-facing)
+// Shows students at current_step = 3 assigned to the logged-in instructor
+// ─────────────────────────────────────────────────────────────────────────────
+QWidget* AdminWidget::createParkingStudentsPage()
+{
+    QWidget *page = new QWidget();
+    QVBoxLayout *pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(24, 20, 24, 20);
+    pageLayout->setSpacing(16);
+
+    // Header
+    QLabel *titleLbl = new QLabel(QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f  \xc3\x89tudiants \xe2\x80\x94 Phase Parking"), page);
+    titleLbl->setStyleSheet("font-size:20px;font-weight:700;color:#3b82f6;");
+
+    QLabel *subLbl = new QLabel(QString::fromUtf8(
+        "Liste des \xc3\xa9tudiants actuellement en formation parking (synchronis\xc3\xa9 Oracle)"), page);
+    subLbl->setStyleSheet("font-size:13px;color:#6b7280;");
+
+    pageLayout->addWidget(titleLbl);
+    pageLayout->addWidget(subLbl);
+
+    // Scroll area
+    QScrollArea *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet("QScrollArea{background:transparent;}");
+
+    QWidget *content = new QWidget();
+    QVBoxLayout *cardLayout = new QVBoxLayout(content);
+    cardLayout->setSpacing(12);
+    cardLayout->setContentsMargins(0, 0, 0, 0);
+
+    scroll->setWidget(content);
+    pageLayout->addWidget(scroll, 1);
+
+    // Oracle query
+    int instructorId = qApp->property("currentUserId").toInt();
+
+    QSqlQuery q(QSqlDatabase::database()); // default Oracle connection
+    q.prepare(
+        "SELECT sm.id, sm.name, sm.email, sm.phone, "
+        "       NVL(wp.parking_score, 0)           AS parking_score, "
+        "       NVL(wp.parking_status, 'En cours') AS parking_status, "
+        "       (SELECT COUNT(*) FROM SESSION_BOOKING sb "
+        "         WHERE sb.student_id = sm.id "
+        "           AND sb.status = 'COMPLETED' "
+        "           AND sb.session_type = 'PARKING') AS sessions_done, "
+        "       (SELECT COUNT(*) FROM SESSION_BOOKING sb "
+        "         WHERE sb.student_id = sm.id "
+        "           AND sb.status IN ('PENDING','CONFIRMED') "
+        "           AND sb.session_type = 'PARKING') AS sessions_upcoming, "
+        "       (SELECT TO_CHAR(MIN(es.exam_date),'DD/MM/YYYY') "
+        "          FROM EXAM_SESSIONS es "
+        "          JOIN EXAM_REGISTRATIONS er ON er.exam_session_id = es.id "
+        "         WHERE er.student_id = sm.id "
+        "           AND es.exam_date >= TRUNC(SYSDATE)) AS next_exam "
+        "FROM   students sm "
+        "LEFT   JOIN STUDENTS   st ON UPPER(st.login) = UPPER(sm.email) "
+        "LEFT   JOIN WINO_PROGRESS wp ON wp.student_id = st.id "
+        "WHERE  sm.instructor_id = :inst_id "
+        "  AND  sm.status = 'approved' "
+        "  AND  NVL(wp.current_step, 1) = 3 "
+        "ORDER BY sm.name"
+    );
+    q.bindValue(":inst_id", instructorId);
+
+    bool hasRows = q.exec() && q.next();
+
+    if (!hasRows) {
+        // Empty state
+        QFrame *emptyFrame = new QFrame(content);
+        emptyFrame->setStyleSheet(
+            "QFrame{background:#f8fafc;border:2px dashed #cbd5e1;"
+            "border-radius:16px;padding:32px;}");
+        QVBoxLayout *el = new QVBoxLayout(emptyFrame);
+        el->setAlignment(Qt::AlignCenter);
+
+        QLabel *ico = new QLabel(QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f"), emptyFrame);
+        ico->setAlignment(Qt::AlignCenter);
+        ico->setStyleSheet("font-size:48px;");
+
+        QLabel *msg = new QLabel(
+            QString::fromUtf8(
+                "Aucun \xc3\xa9tudiant en phase parking ne vous est actuellement assign\xc3\xa9.\n"
+                "Les \xc3\xa9tudiants apparaissent ici d\xc3\xa8s qu'ils atteignent l'\xc3\xa9tape 3 (Parking)."),
+            emptyFrame);
+        msg->setAlignment(Qt::AlignCenter);
+        msg->setWordWrap(true);
+        msg->setStyleSheet("font-size:14px;color:#64748b;");
+
+        el->addWidget(ico);
+        el->addSpacing(12);
+        el->addWidget(msg);
+
+        cardLayout->addWidget(emptyFrame);
+        cardLayout->addStretch();
+        return page;
+    }
+
+    // Render student cards
+    do {
+        int     studentId     = q.value("id").toInt();
+        QString name          = q.value("name").toString();
+        QString email         = q.value("email").toString();
+        QString phone         = q.value("phone").toString();
+        double  score         = q.value("parking_score").toDouble();
+        QString status        = q.value("parking_status").toString();
+        int     sessionsDone  = q.value("sessions_done").toInt();
+        int     sessionsNext  = q.value("sessions_upcoming").toInt();
+        QString nextExam      = q.value("next_exam").toString();
+        if (nextExam.isEmpty()) nextExam = "-";
+
+        QString scoreColor = (score >= 70) ? "#22c55e" : (score >= 40) ? "#f59e0b" : "#ef4444";
+        QString scoreBg    = (score >= 70) ? "#dcfce7" : (score >= 40) ? "#fef3c7" : "#fee2e2";
+
+        QFrame *card = new QFrame(content);
+        card->setObjectName("parkStudCard");
+        card->setStyleSheet(
+            "QFrame#parkStudCard{"
+            "  background:#ffffff;border:1px solid #e2e8f0;"
+            "  border-radius:14px;padding:16px;}"
+            "QFrame#parkStudCard:hover{"
+            "  border-color:#3b82f6;}");
+
+        QHBoxLayout *hl = new QHBoxLayout(card);
+        hl->setSpacing(16);
+        hl->setContentsMargins(0, 0, 0, 0);
+
+        // Avatar
+        QLabel *avatarLbl = new QLabel(QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f"), card);
+        avatarLbl->setFixedSize(52, 52);
+        avatarLbl->setAlignment(Qt::AlignCenter);
+        avatarLbl->setStyleSheet("background:#eff6ff;border-radius:26px;font-size:24px;");
+        hl->addWidget(avatarLbl);
+
+        // Info column
+        QVBoxLayout *infoV = new QVBoxLayout();
+        infoV->setSpacing(3);
+
+        QLabel *nameLbl = new QLabel(name, card);
+        nameLbl->setStyleSheet("font-size:15px;font-weight:700;color:#1e293b;");
+
+        QString contactStr = email;
+        if (!phone.isEmpty()) contactStr += "  |  " + phone;
+        QLabel *contactLbl = new QLabel(contactStr, card);
+        contactLbl->setStyleSheet("font-size:12px;color:#64748b;");
+
+        QLabel *sessLbl = new QLabel(
+            QString("%1 seance(s) effectuee(s)  |  %2 a venir  |  Prochain examen : %3")
+                .arg(sessionsDone).arg(sessionsNext).arg(nextExam),
+            card);
+        sessLbl->setStyleSheet("font-size:12px;color:#475569;");
+
+        infoV->addWidget(nameLbl);
+        infoV->addWidget(contactLbl);
+        infoV->addWidget(sessLbl);
+        hl->addLayout(infoV, 1);
+
+        // Score badge
+        QVBoxLayout *scoreV = new QVBoxLayout();
+        scoreV->setAlignment(Qt::AlignCenter);
+
+        QLabel *scoreLbl = new QLabel(QString::number(score, 'f', 0), card);
+        scoreLbl->setAlignment(Qt::AlignCenter);
+        scoreLbl->setStyleSheet(
+            QString("font-size:22px;font-weight:800;color:%1;"
+                    "background:%2;border-radius:10px;padding:6px 14px;")
+                .arg(scoreColor, scoreBg));
+
+        QLabel *statusLbl = new QLabel(status, card);
+        statusLbl->setAlignment(Qt::AlignCenter);
+        statusLbl->setStyleSheet(QString("font-size:11px;font-weight:600;color:%1;").arg(scoreColor));
+
+        scoreV->addWidget(scoreLbl);
+        scoreV->addWidget(statusLbl);
+        hl->addLayout(scoreV);
+
+        Q_UNUSED(studentId)
+        cardLayout->addWidget(card);
+
+    } while (q.next());
+
+    cardLayout->addStretch();
+    return page;
 }

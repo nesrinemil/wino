@@ -4,17 +4,11 @@
  <widget class="QMainWindow" name="InstructorDashboard">
   <property name="geometry"><rect><x>0</x><y>0</y><width>1200</width><height>800</height></rect></property>
   <property name="windowTitle"><string>Instructor Dashboard</string></property>
-  <property name="styleSheet"><string>QMainWindow { background-color: #F3F4F6; }
+  <property name="styleSheet"><string>QMainWindow { background-color: #F1F5F9; }
 #headerWidget { background-color: #14B8A6; }
 #headerTitle { color: white; font-size: 18px; font-weight: bold; }
 #logoutButton { background-color: transparent; color: white; border: 2px solid white; border-radius: 5px; padding: 8px 20px; font-weight: bold; }
-.statCard { background-color: white; border-radius: 10px; padding: 15px; }
-.statLabel { color: #6B7280; font-size: 13px; }
-.statCount { color: #1F1827; font-size: 28px; font-weight: bold; }
-QTabWidget::pane { border: none; background-color: transparent; }
-QTabBar::tab { background-color: #E5E7EB; color: #6B7280; padding: 12px 24px; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 4px; font-weight: bold; }
-QTabBar::tab:selected { background-color: #14B8A6; color: white; }
-#instructorBadge { background-color: #14B8A6; color: white; border-radius: 5px; padding: 6px 12px; font-weight: bold; }</string></property>
+QTabWidget::pane { border: none; background-color: transparent; }</string></property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
     <property name="spacing"><number>0</number></property>
@@ -36,89 +30,68 @@ QTabBar::tab:selected { background-color: #14B8A6; color: white; }
     </item>
     <item>
      <widget class="QWidget" name="contentWidget" native="true">
+      <property name="styleSheet"><string>background-color: #F1F5F9;</string></property>
       <layout class="QVBoxLayout" name="verticalLayout_2">
-       <property name="spacing"><number>20</number></property>
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_2">
-         <item><widget class="QLabel" name="pageTitle"><property name="text"><string>Driving School Management</string></property><property name="styleSheet"><string>font-size: 24px; font-weight: bold; color: #1F1827;</string></property></widget></item>
-         <item><spacer name="horizontalSpacer_2"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
-         <item><widget class="QLabel" name="instructorBadge"><property name="text"><string>Instructor</string></property></widget></item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="statsLayout">
-         <item>
-          <widget class="QFrame" name="requestsCard">
-           <property name="class" stdset="0"><string notr="true">statCard</string></property>
-           <layout class="QVBoxLayout" name="verticalLayout_3">
-            <item><widget class="QLabel" name="requestsIcon"><property name="text"><string>📝</string></property><property name="styleSheet"><string>font-size: 24px;</string></property></widget></item>
-            <item><widget class="QLabel" name="requestsLabel"><property name="text"><string>Requests</string></property><property name="class" stdset="0"><string>statLabel</string></property></widget></item>
-            <item><widget class="QLabel" name="requestsCountLabel"><property name="text"><string>0</string></property><property name="class" stdset="0"><string>statCount</string></property></widget></item>
-           </layout>
-          </widget>
-         </item>
-         <item>
-          <widget class="QFrame" name="studentsCard">
-           <property name="class" stdset="0"><string notr="true">statCard</string></property>
-           <layout class="QVBoxLayout" name="verticalLayout_4">
-            <item><widget class="QLabel" name="studentsIcon"><property name="text"><string>👥</string></property><property name="styleSheet"><string>font-size: 24px;</string></property></widget></item>
-            <item><widget class="QLabel" name="studentsLabel"><property name="text"><string>Active Students</string></property><property name="class" stdset="0"><string>statLabel</string></property></widget></item>
-            <item><widget class="QLabel" name="studentsCountLabel"><property name="text"><string>0</string></property><property name="class" stdset="0"><string>statCount</string></property></widget></item>
-           </layout>
-          </widget>
-         </item>
-         <item>
-          <widget class="QFrame" name="vehiclesCard">
-           <property name="class" stdset="0"><string notr="true">statCard</string></property>
-           <layout class="QVBoxLayout" name="verticalLayout_5">
-            <item><widget class="QLabel" name="vehiclesIcon"><property name="text"><string>🚗</string></property><property name="styleSheet"><string>font-size: 24px;</string></property></widget></item>
-            <item><widget class="QLabel" name="vehiclesLabel"><property name="text"><string>Vehicles</string></property><property name="class" stdset="0"><string>statLabel</string></property></widget></item>
-            <item><widget class="QLabel" name="vehiclesCountLabel"><property name="text"><string>0</string></property><property name="class" stdset="0"><string>statCount</string></property></widget></item>
-           </layout>
-          </widget>
-         </item>
-        </layout>
-       </item>
+       <property name="spacing"><number>0</number></property>
+       <property name="leftMargin"><number>0</number></property>
+       <property name="topMargin"><number>0</number></property>
+       <property name="rightMargin"><number>0</number></property>
+       <property name="bottomMargin"><number>0</number></property>
        <item>
         <widget class="QTabWidget" name="tabWidget">
          <property name="currentIndex"><number>0</number></property>
          <widget class="QWidget" name="requestsTab">
-          <attribute name="title"><string>Requests (3)</string></attribute>
+          <attribute name="title"><string>Requests</string></attribute>
           <layout class="QVBoxLayout" name="verticalLayout_6">
+           <property name="spacing"><number>0</number></property>
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
            <item>
             <widget class="QScrollArea" name="scrollArea">
              <property name="widgetResizable"><bool>true</bool></property>
              <property name="styleSheet"><string>border: none; background-color: transparent;</string></property>
              <widget class="QWidget" name="requestsContainer">
-              <property name="geometry"><rect><x>0</x><y>0</y><width>1140</width><height>450</height></rect></property>
+              <property name="geometry"><rect><x>0</x><y>0</y><width>960</width><height>700</height></rect></property>
              </widget>
             </widget>
            </item>
           </layout>
          </widget>
          <widget class="QWidget" name="studentsTab">
-          <attribute name="title"><string>Students (2)</string></attribute>
+          <attribute name="title"><string>Students</string></attribute>
           <layout class="QVBoxLayout" name="verticalLayout_7">
+           <property name="spacing"><number>0</number></property>
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
            <item>
             <widget class="QScrollArea" name="scrollArea_2">
              <property name="widgetResizable"><bool>true</bool></property>
              <property name="styleSheet"><string>border: none; background-color: transparent;</string></property>
              <widget class="QWidget" name="studentsContainer">
-              <property name="geometry"><rect><x>0</x><y>0</y><width>1140</width><height>450</height></rect></property>
+              <property name="geometry"><rect><x>0</x><y>0</y><width>960</width><height>700</height></rect></property>
              </widget>
             </widget>
            </item>
           </layout>
          </widget>
          <widget class="QWidget" name="vehiclesTab">
-          <attribute name="title"><string>Vehicles (4)</string></attribute>
+          <attribute name="title"><string>Vehicles</string></attribute>
           <layout class="QVBoxLayout" name="verticalLayout_8">
+           <property name="spacing"><number>0</number></property>
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
            <item>
             <widget class="QScrollArea" name="scrollArea_3">
              <property name="widgetResizable"><bool>true</bool></property>
              <property name="styleSheet"><string>border: none; background-color: transparent;</string></property>
              <widget class="QWidget" name="vehiclesContainer">
-              <property name="geometry"><rect><x>0</x><y>0</y><width>1140</width><height>450</height></rect></property>
+              <property name="geometry"><rect><x>0</x><y>0</y><width>960</width><height>700</height></rect></property>
              </widget>
             </widget>
            </item>

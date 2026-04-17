@@ -16,6 +16,12 @@
 #include <QDate>
 #include <QFileInfo>
 #include <QPixmap>
+#include <QPainter>
+#include <QStandardPaths>
+#include <QProcess>
+#include <QTemporaryFile>
+#include <QRegularExpression>
+#include <QTimer>
 
 InstructorDashboard::InstructorDashboard(QWidget *parent) :
     QMainWindow(parent),
@@ -41,7 +47,175 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
     // ── Administration tab (lazy-loaded on first switch) ──────────────────────
     m_adminTabWidget = new QWidget();
     m_adminTabWidget->setLayout(new QVBoxLayout(m_adminTabWidget));
-    ui->tabWidget->addTab(m_adminTabWidget, QString::fromUtf8("📊 Administration"));
+    ui->tabWidget->addTab(m_adminTabWidget, QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Parking"));
+
+    // ── Hide the QTabWidget tab bar (we use a custom sidebar instead) ─────────
+    ui->tabWidget->tabBar()->hide();
+    ui->tabWidget->setDocumentMode(true);
+    ui->tabWidget->setStyleSheet(
+        "QTabWidget::pane { border: none; background: transparent; }");
+
+    // ── Detach contentWidget and wrap it in a horizontal splitter ─────────────
+    // Main vertical layout: [headerWidget, contentWidget]
+    QLayout *rootVLayout = ui->centralwidget->layout();
+    rootVLayout->removeWidget(ui->contentWidget);
+
+    // Horizontal container: [sidebar | contentWidget]
+    QWidget *hContainer = new QWidget(ui->centralwidget);
+    hContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    QHBoxLayout *hLayout = new QHBoxLayout(hContainer);
+    hLayout->setContentsMargins(0, 0, 0, 0);
+    hLayout->setSpacing(0);
+
+    // ── Build the sidebar ──────────────────────────────────────────────────────
+    QFrame *instrSidebar = new QFrame(hContainer);
+    instrSidebar->setFixedWidth(230);
+    instrSidebar->setObjectName("instrSidebar");
+    instrSidebar->setStyleSheet(
+        "QFrame#instrSidebar { background: #111827; border-right: 1px solid #1E293B; }"
+        "QFrame#instrSidebar * { background: transparent; }");
+
+    QVBoxLayout *sideLayout = new QVBoxLayout(instrSidebar);
+    sideLayout->setContentsMargins(0, 0, 0, 0);
+    sideLayout->setSpacing(0);
+
+    // Brand header
+    QLabel *sideLogo = new QLabel(QString::fromUtf8("🏫"), instrSidebar);
+    sideLogo->setAlignment(Qt::AlignCenter);
+    sideLogo->setStyleSheet("font-size: 32px; padding: 20px 0 4px 0;");
+
+    QLabel *sideBrand = new QLabel("SmartDrive", instrSidebar);
+    sideBrand->setAlignment(Qt::AlignCenter);
+    sideBrand->setStyleSheet(
+        "font-size: 16px; font-weight: bold; color: #14B8A6; padding-bottom: 2px;");
+
+    QLabel *sideSub = new QLabel("Instructor Space", instrSidebar);
+    sideSub->setAlignment(Qt::AlignCenter);
+    sideSub->setStyleSheet("font-size: 11px; color: #64748B; padding-bottom: 12px;");
+
+    sideLayout->addWidget(sideLogo);
+    sideLayout->addWidget(sideBrand);
+    sideLayout->addWidget(sideSub);
+
+    // Helper: horizontal divider
+    auto addSideDivider = [&]() {
+        QFrame *d = new QFrame(instrSidebar);
+        d->setFrameShape(QFrame::HLine);
+        d->setFixedHeight(1);
+        d->setStyleSheet("background: #1E293B; margin: 0;");
+        sideLayout->addWidget(d);
+    };
+    addSideDivider();
+    sideLayout->addSpacing(10);
+
+    // Nav button factory (matches student area style exactly)
+    auto makeNavBtn = [&](const QString &icon, const QString &text) -> QPushButton* {
+        QPushButton *btn = new QPushButton(instrSidebar);
+        btn->setFixedHeight(48);
+        btn->setText(QString("  %1   %2").arg(icon, text));
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(
+            "QPushButton { background: transparent; color: #64748B; "
+            "border: none; border-left: 3px solid transparent; "
+            "text-align: left; padding-left: 16px; "
+            "font-size: 14px; font-weight: 500; border-radius: 0; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.05); color: #E2E8F0; }");
+        return btn;
+    };
+
+    // Section label: MANAGEMENT
+    QLabel *mgmtLbl = new QLabel("  MANAGEMENT", instrSidebar);
+    mgmtLbl->setStyleSheet(
+        "font-size: 10px; font-weight: bold; color: #64748B; "
+        "letter-spacing: 2px; padding: 0 20px 8px 20px;");
+    sideLayout->addWidget(mgmtLbl);
+
+    m_navRequests = makeNavBtn(QString::fromUtf8("📝"), "Requests");
+    m_navStudents = makeNavBtn(QString::fromUtf8("👥"), "Students");
+    m_navVehicles = makeNavBtn(QString::fromUtf8("🚗"), "Vehicles");
+    sideLayout->addWidget(m_navRequests);
+    sideLayout->addWidget(m_navStudents);
+    sideLayout->addWidget(m_navVehicles);
+
+    addSideDivider();
+    sideLayout->addSpacing(8);
+
+    // Section label: TRAINING
+    QLabel *trainingLbl = new QLabel("  TRAINING", instrSidebar);
+    trainingLbl->setStyleSheet(
+        "font-size: 10px; font-weight: bold; color: #64748B; "
+        "letter-spacing: 2px; padding: 0 20px 8px 20px;");
+    sideLayout->addWidget(trainingLbl);
+
+    m_navCircuit  = makeNavBtn(QString::fromUtf8("⚡"), "Circuit");
+    m_navSessions = makeNavBtn(QString::fromUtf8("📅"), "Sessions");
+    m_navParking  = makeNavBtn(QString::fromUtf8("🅿️"), "Parking");
+    sideLayout->addWidget(m_navCircuit);
+    sideLayout->addWidget(m_navSessions);
+    sideLayout->addWidget(m_navParking);
+
+    sideLayout->addStretch();
+    addSideDivider();
+
+    // ── Theme toggle (matches student area bottom button) ─────────────────────
+    bool initDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+    m_themeBtn = new QPushButton(instrSidebar);
+    m_themeBtn->setFixedHeight(48);
+    m_themeBtn->setText(initDark ? QString::fromUtf8("  ☀️   Light Mode")
+                                 : QString::fromUtf8("  🌙   Dark Mode"));
+    m_themeBtn->setCursor(Qt::PointingHandCursor);
+    sideLayout->addWidget(m_themeBtn);
+
+    addSideDivider();
+
+    // Logout at the bottom
+    QPushButton *logoutSideBtn = new QPushButton(instrSidebar);
+    logoutSideBtn->setFixedHeight(48);
+    logoutSideBtn->setText(QString::fromUtf8("  🚪   Logout"));
+    logoutSideBtn->setCursor(Qt::PointingHandCursor);
+    logoutSideBtn->setStyleSheet(
+        "QPushButton { background: transparent; color: #EF4444; "
+        "border: none; border-left: 3px solid transparent; "
+        "text-align: left; padding-left: 16px; "
+        "font-size: 14px; font-weight: 500; border-radius: 0; }"
+        "QPushButton:hover { background: rgba(239,68,68,0.08); }");
+    connect(logoutSideBtn, &QPushButton::clicked,
+            this, &InstructorDashboard::onLogoutClicked);
+    sideLayout->addWidget(logoutSideBtn);
+
+    // ── Store sidebar reference (for theme updates) ────────────────────────────
+    m_sidebar = instrSidebar;
+
+    // ── Apply initial theme + connect theme changes ───────────────────────────
+    updateSidebarTheme();
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &InstructorDashboard::updateSidebarTheme);
+    connect(m_themeBtn, &QPushButton::clicked, this, [this]() {
+        ThemeManager::instance()->toggleTheme();
+    });
+
+    // ── Wire nav buttons to tab indices ───────────────────────────────────────
+    connect(m_navRequests, &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(0); setActiveNavBtn(m_navRequests); });
+    connect(m_navStudents, &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(1); setActiveNavBtn(m_navStudents); });
+    connect(m_navVehicles, &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(2); setActiveNavBtn(m_navVehicles); });
+    connect(m_navCircuit,  &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(3); setActiveNavBtn(m_navCircuit); });
+    connect(m_navSessions, &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(4); setActiveNavBtn(m_navSessions); });
+    connect(m_navParking,  &QPushButton::clicked, this, [this]() {
+        ui->tabWidget->setCurrentIndex(5); setActiveNavBtn(m_navParking); });
+
+    // Highlight Requests as default active page
+    setActiveNavBtn(m_navRequests);
+
+    // ── Assemble horizontal container ─────────────────────────────────────────
+    ui->contentWidget->setParent(hContainer);
+    hLayout->addWidget(instrSidebar);
+    hLayout->addWidget(ui->contentWidget, 1);
+    rootVLayout->addWidget(hContainer);
 
     // loadData() is called by init() after login sets schoolId + instructorId
 }
@@ -65,38 +239,29 @@ void InstructorDashboard::loadData()
         ? " AND instructor_id = ?"
         : "";
 
-    // Get counts
+    // ── Update sidebar nav button labels with live counts ────────────────────
     query.prepare("SELECT COUNT(*) FROM students WHERE school_id = ?" + instrFilter + " AND status = 'pending'");
     bindInstr(query);
     if (query.exec() && query.next()) {
-        ui->requestsCountLabel->setText(QString::number(query.value(0).toInt()));
+        int n = query.value(0).toInt();
+        if (m_navRequests)
+            m_navRequests->setText(QString("  📝   Requests  (%1)").arg(n));
     }
 
     query.prepare("SELECT COUNT(*) FROM students WHERE school_id = ?" + instrFilter + " AND status = 'approved'");
     bindInstr(query);
     if (query.exec() && query.next()) {
-        ui->studentsCountLabel->setText(QString::number(query.value(0).toInt()));
+        int n = query.value(0).toInt();
+        if (m_navStudents)
+            m_navStudents->setText(QString("  👥   Students  (%1)").arg(n));
     }
-    
+
     query.prepare("SELECT COUNT(*) FROM cars WHERE driving_school_id = ?");
     query.addBindValue(schoolId);
     if (query.exec() && query.next()) {
-        int vehicleCount = query.value(0).toInt();
-        ui->vehiclesCountLabel->setText(QString::number(vehicleCount));
-        ui->tabWidget->setTabText(2, QString("Vehicles (%1)").arg(vehicleCount));
-    }
-    
-    // Update tab titles
-    query.prepare("SELECT COUNT(*) FROM students WHERE school_id = ?" + instrFilter + " AND status = 'pending'");
-    bindInstr(query);
-    if (query.exec() && query.next()) {
-        ui->tabWidget->setTabText(0, QString("Requests (%1)").arg(query.value(0).toInt()));
-    }
-
-    query.prepare("SELECT COUNT(*) FROM students WHERE school_id = ?" + instrFilter + " AND status = 'approved'");
-    bindInstr(query);
-    if (query.exec() && query.next()) {
-        ui->tabWidget->setTabText(1, QString("Students (%1)").arg(query.value(0).toInt()));
+        int n = query.value(0).toInt();
+        if (m_navVehicles)
+            m_navVehicles->setText(QString("  🚗   Vehicles  (%1)").arg(n));
     }
     
     // Load pending requests
@@ -112,7 +277,7 @@ void InstructorDashboard::loadData()
     
     QVBoxLayout *requestsLayout = new QVBoxLayout(ui->requestsContainer);
     requestsLayout->setSpacing(15);
-    requestsLayout->setContentsMargins(0, 0, 0, 0);
+    requestsLayout->setContentsMargins(24, 24, 24, 24);
     
     query.prepare("SELECT id, name, email, phone, birth_date, requested_date FROM students WHERE school_id = ?" + instrFilter + " AND status = 'pending' ORDER BY requested_date DESC");
     bindInstr(query);
@@ -141,16 +306,20 @@ void InstructorDashboard::loadData()
     
     QVBoxLayout *studentsLayout = new QVBoxLayout(ui->studentsContainer);
     studentsLayout->setSpacing(15);
-    studentsLayout->setContentsMargins(0, 0, 0, 0);
+    studentsLayout->setContentsMargins(24, 24, 24, 24);
     
-    query.prepare("SELECT id, name, email, phone FROM students WHERE school_id = ?" + instrFilter + " AND status = 'approved'");
+    query.prepare("SELECT id, name, email, phone, cin FROM students WHERE school_id = ?" + instrFilter + " AND status = 'approved'");
     bindInstr(query);
-    
+
     if (query.exec()) {
         while (query.next()) {
             QWidget *card = new QWidget();
-            setupApprovedStudentCard(card, query.value(0).toInt(), query.value(1).toString(),
-                                    query.value(2).toString(), query.value(3).toString());
+            setupApprovedStudentCard(card,
+                                     query.value(0).toInt(),
+                                     query.value(1).toString(),
+                                     query.value(2).toString(),
+                                     query.value(3).toString(),
+                                     query.value(4).toString());
             studentsLayout->addWidget(card);
         }
     }
@@ -169,7 +338,7 @@ void InstructorDashboard::loadData()
     
     QVBoxLayout *vehiclesLayout = new QVBoxLayout(ui->vehiclesContainer);
     vehiclesLayout->setSpacing(15);
-    vehiclesLayout->setContentsMargins(0, 0, 0, 0);
+    vehiclesLayout->setContentsMargins(24, 24, 24, 24);
     
     // Add "Add Vehicle" button at top
     QPushButton *addVehicleBtn = new QPushButton("+ Add Vehicle");
@@ -244,7 +413,8 @@ void InstructorDashboard::setupStudentCard(QWidget *card, int studentId, const Q
 }
 
 void InstructorDashboard::setupApprovedStudentCard(QWidget *card, int studentId, const QString &name,
-                                                   const QString &email, const QString &phone)
+                                                   const QString &email, const QString &phone,
+                                                   const QString &cin)
 {
     Q_UNUSED(studentId);
     static int approvedCardCounter = 0;
@@ -255,11 +425,48 @@ void InstructorDashboard::setupApprovedStudentCard(QWidget *card, int studentId,
     QHBoxLayout *layout = new QHBoxLayout(card);
     layout->setContentsMargins(20, 15, 20, 15);
     layout->setSpacing(15);
-    
-    // Avatar circle
+
+    // ── Avatar: try to load student photo, fall back to teal circle ──────────
     QLabel *avatar = new QLabel();
-    avatar->setStyleSheet("background-color: #14B8A6; border-radius: 25px; min-width: 50px; max-width: 50px; min-height: 50px; max-height: 50px;");
+    avatar->setFixedSize(50, 50);
     avatar->setAlignment(Qt::AlignCenter);
+
+    // Look up photo file: AppData/student_photos/<cin>.<ext>
+    bool photoLoaded = false;
+    if (!cin.isEmpty()) {
+        QString photosDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                            + "/student_photos";
+        for (const QString &ext : {"jpg","jpeg","png","bmp","webp"}) {
+            QString path = photosDir + "/" + cin + "." + ext;
+            if (QFile::exists(path)) {
+                QPixmap px(path);
+                if (!px.isNull()) {
+                    // Circular crop
+                    QPixmap circle(50, 50);
+                    circle.fill(Qt::transparent);
+                    QPainter painter(&circle);
+                    painter.setRenderHint(QPainter::Antialiasing);
+                    painter.setBrush(QBrush(px.scaled(50, 50, Qt::KeepAspectRatioByExpanding,
+                                                       Qt::SmoothTransformation)));
+                    painter.setPen(Qt::NoPen);
+                    painter.drawEllipse(0, 0, 50, 50);
+                    painter.end();
+                    avatar->setPixmap(circle);
+                    photoLoaded = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!photoLoaded) {
+        // Fallback: teal circle with initial letter
+        QString initial = name.isEmpty() ? QString("?") : QString(name.at(0).toUpper());
+        avatar->setText(initial);
+        avatar->setStyleSheet(
+            "background-color: #14B8A6; border-radius: 25px;"
+            "color: white; font-size: 20px; font-weight: bold;"
+            "min-width:50px; max-width:50px; min-height:50px; max-height:50px;");
+    }
     layout->addWidget(avatar);
     
     // Info section
@@ -576,10 +783,9 @@ void InstructorDashboard::setupVehicleCard(QWidget *card, int vehicleId, const Q
 
 void InstructorDashboard::switchTab(int index)
 {
-    // ── Circuit tab (index 3) ──────────────────────────────────────────────────
+    // ── Circuit tab (index 3) ─────────────────────────────────────────────────
     if (index == 3) {
         if (!m_circuitDashboard) {
-            // First visit — create the widget
             OracleConnectionParams p;
             p.drivingSchoolId = schoolId;
             p.instructorId    = instructorId;
@@ -594,54 +800,391 @@ void InstructorDashboard::switchTab(int index)
                 cs.setValue("dbInstructorId",    instructorId > 0 ? instructorId : 1);
                 cs.sync();
             }
+            // Force embedded behavior — no separate window
             m_circuitDashboard = new CircuitDashboard(m_circuitTab);
-            // Auto-reset pointer if the widget is ever destroyed
+            m_circuitDashboard->setWindowFlags(Qt::Widget);
             connect(m_circuitDashboard, &QObject::destroyed, this, [this]() {
                 m_circuitDashboard = nullptr;
             });
-            m_circuitTab->layout()->addWidget(m_circuitDashboard);
+            // Sync to current theme immediately after creation
+            m_circuitIsDark = true;   // CircuitDashboard always starts dark
+            bool curDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+            applyThemeToCircuit(curDark);
+
+            // Wrap in a scroll area so content is scrollable
+            QScrollArea *sa = new QScrollArea(m_circuitTab);
+            sa->setWidget(m_circuitDashboard);
+            sa->setWidgetResizable(true);
+            sa->setFrameShape(QFrame::NoFrame);
+            sa->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+            m_circuitTab->layout()->addWidget(sa);
         }
-        // Always make visible — handles the case where it was hidden/closed
-        m_circuitDashboard->show();
-        m_circuitDashboard->raise();
     }
 
-    // ── Sessions tab (index 4) ─────────────────────────────────────────────────
+    // ── Sessions tab (index 4) ────────────────────────────────────────────────
     if (index == 4) {
         qApp->setProperty("currentUserId", instructorId > 0 ? instructorId : 1);
 
         if (!m_winoTab) {
             WinoBootstrap::bootstrap();
+            // WinoInstructorDashboard is now a QWidget — embeds directly
             m_winoTab = new WinoInstructorDashboard(m_winoTabWidget);
-            // Auto-reset pointer if the widget is ever destroyed
             connect(m_winoTab, &QObject::destroyed, this, [this]() {
                 m_winoTab = nullptr;
             });
-            m_winoTabWidget->layout()->addWidget(m_winoTab);
+            // Hide the inner header (← Back, title, D17 badge, theme toggle)
+            // Navigation is handled by the outer sidebar
+            if (QWidget *innerHdr = m_winoTab->findChild<QWidget*>("header"))
+                innerHdr->hide();
+            // Wrap in a scroll area
+            QScrollArea *sa = new QScrollArea(m_winoTabWidget);
+            sa->setWidget(m_winoTab);
+            sa->setWidgetResizable(true);
+            sa->setFrameShape(QFrame::NoFrame);
+            sa->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+            m_winoTabWidget->layout()->addWidget(sa);
         }
-        // Always make visible
-        m_winoTab->show();
-        m_winoTab->raise();
     }
 
-    // ── Administration tab (index 5) ──────────────────────────────────────────
+    // ── Parking / Administration tab (index 5) ────────────────────────────────
     if (index == 5) {
         if (!m_adminTab) {
             ParkingDBManager::instance().initialize("", "", "");
+            // AdminWidget is already a QWidget — embeds directly
             m_adminTab = new AdminWidget(
                 QString("Instructor"),
                 QString("Moniteur"),
+                instructorId,
                 m_adminTabWidget
             );
             connect(m_adminTab, &QObject::destroyed, this, [this]() {
                 m_adminTab = nullptr;
             });
-            m_adminTabWidget->layout()->addWidget(m_adminTab);
+            // Wrap in a scroll area
+            QScrollArea *sa = new QScrollArea(m_adminTabWidget);
+            sa->setWidget(m_adminTab);
+            sa->setWidgetResizable(true);
+            sa->setFrameShape(QFrame::NoFrame);
+            sa->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+            m_adminTabWidget->layout()->addWidget(sa);
         }
-        m_adminTab->show();
-        m_adminTab->raise();
     }
+}
 
+// ══════════════════════════════════════════════════════════════
+//  Sidebar: full light/dark theme update  (matches student area)
+// ══════════════════════════════════════════════════════════════
+void InstructorDashboard::updateSidebarTheme()
+{
+    ThemeManager *tm = ThemeManager::instance();
+    bool isDark = (tm->currentTheme() == ThemeManager::Dark);
+
+    // ── Build global stylesheet ───────────────────────────────────────────────
+    QString globalSS = QString(
+        "QMainWindow, QDialog { background-color: %1; }"
+        "QWidget   { background-color: %1; color: %2; }"
+        "QFrame    { background-color: %3; color: %2; }"
+        "QLabel    { color: %2; background: transparent; }"
+        "QScrollArea { background-color: %1; border: none; }"
+        "QScrollBar:vertical { background: %4; width: 8px; border-radius: 4px; }"
+        "QScrollBar::handle:vertical { background: %5; border-radius: 4px; min-height: 30px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }"
+        "QPushButton { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 6px 14px; }"
+        "QPushButton:hover { background-color: %4; }"
+        "QLineEdit, QTextEdit, QPlainTextEdit { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 4px 8px; }"
+        "QComboBox { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 4px 8px; }"
+        "QComboBox QAbstractItemView { background-color: %3; color: %2; selection-background-color: %5; }"
+        "QTableWidget, QListWidget, QTreeWidget { background-color: %3; color: %2; gridline-color: %4; border: 1px solid %4; }"
+        "QTableWidget::item:selected, QListWidget::item:selected { background-color: %5; color: white; }"
+        "QHeaderView::section { background-color: %4; color: %2; border: none; padding: 6px; }"
+        "QTabBar::tab { background-color: %3; color: %2; border: 1px solid %4; padding: 8px 16px; }"
+        "QTabBar::tab:selected { background-color: %1; color: %6; border-bottom: 2px solid %6; }"
+        "QGroupBox { color: %2; border: 1px solid %4; border-radius: 8px; margin-top: 12px; padding-top: 8px; }"
+        "QGroupBox::title { color: %2; subcontrol-origin: margin; left: 12px; }"
+        "QToolTip { background-color: %3; color: %2; border: 1px solid %4; border-radius: 4px; padding: 4px 8px; }"
+    )
+    .arg(tm->backgroundColor())
+    .arg(tm->primaryTextColor())
+    .arg(tm->cardColor())
+    .arg(tm->borderColor())
+    .arg(tm->accentColor())
+    .arg(tm->accentColor());
+
+    // ── All style application (runs at mid-point of the fade) ─────────────────
+    auto applyAll = [this, isDark, globalSS]() {
+        qApp->setStyleSheet(globalSS);
+        applyThemeToCircuit(isDark);
+
+        if (!m_sidebar) return;
+
+        const QString sidebarBg = isDark ? "#111827" : "#FFFFFF";
+        const QString borderClr = isDark ? "#1E293B" : "#E2E8F0";
+        const QString mutedClr  = isDark ? "#64748B" : "#6B7280";
+        const QString textClr   = isDark ? "#E2E8F0" : "#111827";
+        const QString hoverBg   = isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)";
+        const QString contentBg = isDark ? "#0F172A" : "#F1F5F9";
+
+        m_sidebar->setStyleSheet(QString(
+            "QFrame#instrSidebar { background: %1; border-right: 1px solid %2; }"
+            "QFrame#instrSidebar * { background: transparent; }")
+            .arg(sidebarBg, borderClr));
+
+        if (ui->contentWidget)
+            ui->contentWidget->setStyleSheet(
+                QString("background-color: %1;").arg(contentBg));
+
+        for (QLabel *lbl : m_sidebar->findChildren<QLabel*>()) {
+            QString ss = lbl->styleSheet();
+            if (ss.contains("#14B8A6")) continue;
+            if (ss.contains("font-size: 32px")) continue;
+            lbl->setStyleSheet(ss.isEmpty()
+                ? QString("color: %1;").arg(mutedClr)
+                : ss.replace(QRegularExpression("color:\\s*#[0-9A-Fa-f]{3,6}"),
+                             QString("color: %1").arg(mutedClr)));
+        }
+
+        const QString inactiveSS = QString(
+            "QPushButton { background: transparent; color: %1; "
+            "border: none; border-left: 3px solid transparent; "
+            "text-align: left; padding-left: 16px; "
+            "font-size: 14px; font-weight: 500; border-radius: 0; }"
+            "QPushButton:hover { background: %2; color: %3; }")
+            .arg(mutedClr, hoverBg, textClr);
+
+        for (QPushButton *btn : QList<QPushButton*>{
+                m_navRequests, m_navStudents, m_navVehicles,
+                m_navCircuit,  m_navSessions, m_navParking}) {
+            if (!btn) continue;
+            if (!btn->styleSheet().contains("#14B8A6"))
+                btn->setStyleSheet(inactiveSS);
+        }
+
+        if (m_themeBtn) {
+            m_themeBtn->setText(isDark ? QString::fromUtf8("  ☀️   Light Mode")
+                                       : QString::fromUtf8("  🌙   Dark Mode"));
+            m_themeBtn->setStyleSheet(QString(
+                "QPushButton { background: transparent; color: %1; "
+                "border: none; border-left: 3px solid transparent; "
+                "text-align: left; padding-left: 16px; "
+                "font-size: 13px; font-weight: 500; border-radius: 0; }"
+                "QPushButton:hover { background: %2; color: %3; }")
+                .arg(mutedClr, hoverBg, textClr));
+        }
+    };
+
+    // Apply everything immediately — instant, clean, no flicker
+    applyAll();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Sidebar: highlight the active nav button (student-area style)
+// ══════════════════════════════════════════════════════════════
+void InstructorDashboard::setActiveNavBtn(QPushButton *active)
+{
+    const QList<QPushButton*> all = {
+        m_navRequests, m_navStudents, m_navVehicles,
+        m_navCircuit, m_navSessions, m_navParking
+    };
+    for (QPushButton *btn : all) {
+        if (!btn) continue;
+        if (btn == active) {
+            btn->setStyleSheet(
+                "QPushButton { background: rgba(20,184,166,0.15); color: #14B8A6; "
+                "border-left: 3px solid #14B8A6; text-align: left; padding-left: 13px; "
+                "font-size: 14px; font-weight: 600; border-radius: 0; "
+                "border-top: none; border-right: none; border-bottom: none; }");
+        } else {
+            bool dk = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+            const QString mc = dk ? "#64748B" : "#6B7280";
+            const QString tc = dk ? "#E2E8F0" : "#111827";
+            const QString hb = dk ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)";
+            btn->setStyleSheet(QString(
+                "QPushButton { background: transparent; color: %1; "
+                "border: none; border-left: 3px solid transparent; "
+                "text-align: left; padding-left: 16px; "
+                "font-size: 14px; font-weight: 500; border-radius: 0; }"
+                "QPushButton:hover { background: %3; color: %2; }")
+                .arg(mc, tc, hb));
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Circuit theme: string-replace hardcoded dark colors in every
+//  child widget's stylesheet (CircuitDashboard has no ThemeManager)
+// ══════════════════════════════════════════════════════════════
+void InstructorDashboard::applyThemeToCircuit(bool isDark)
+{
+    if (!m_circuitDashboard) return;
+    if (m_circuitIsDark == isDark) return;   // already correct state, skip
+
+    // Delegate to CircuitDashboard's own applyTheme() which handles both
+    // QCustomPlot graph recoloring AND widget stylesheet replacement.
+    m_circuitDashboard->applyTheme(isDark);
+
+    m_circuitIsDark = isDark;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Enrollment confirmation email  (curl.exe — no OpenSSL needed)
+// ══════════════════════════════════════════════════════════════
+static void sendEnrollmentEmail(const QString &toEmail,
+                                const QString &studentName,
+                                const QString &schoolName,
+                                const QString &instructorName,
+                                QObject *parent)
+{
+    const QString fromEmail   = QStringLiteral("benaliwajih2@gmail.com");
+    const QString appPassword = QString("urrx lftw jafm pfcu").remove(' ');
+
+    // ── Plain-text fallback ──
+    QByteArray plain =
+        "Dear " + studentName.toUtf8() + ",\r\n\r\n"
+        "Congratulations! Your enrollment request has been ACCEPTED.\r\n\r\n"
+        "School    : " + schoolName.toUtf8() + "\r\n"
+        "Instructor: " + instructorName.toUtf8() + "\r\n\r\n"
+        "You can now log in to the Driving School App and start your learning journey.\r\n\r\n"
+        "Best regards,\r\nDriving School App\r\n";
+
+    // ── HTML body ──
+    QByteArray studentNameHtml = studentName.toHtmlEscaped().toUtf8();
+    QByteArray schoolNameHtml  = schoolName.toHtmlEscaped().toUtf8();
+    QByteArray instrNameHtml   = instructorName.toHtmlEscaped().toUtf8();
+
+    QByteArray html =
+        "<!DOCTYPE html>"
+        "<html lang='en'><head><meta charset='UTF-8'/></head>"
+        "<body style='margin:0;padding:0;background:#e0f5f1;"
+        "font-family:Segoe UI,Arial,sans-serif;'>"
+
+        // outer wrapper
+        "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+        "  style='background:#e0f5f1;padding:40px 0;'>"
+        "<tr><td align='center'>"
+
+        // card
+        "<table width='520' cellpadding='0' cellspacing='0' border='0'"
+        "  style='background:#ffffff;border-radius:20px;"
+        "  box-shadow:0 8px 40px rgba(0,0,0,.12);overflow:hidden;'>"
+
+        // header
+        "<tr><td style='background:linear-gradient(135deg,#14B8A6 0%,#0d9488 100%);"
+        "  padding:36px 40px 28px;text-align:center;'>"
+        "  <div style='display:inline-block;background:rgba(255,255,255,.18);"
+        "    border-radius:50%;width:72px;height:72px;line-height:72px;"
+        "    font-size:36px;margin-bottom:14px;'>&#x1F393;</div>"
+        "  <h1 style='margin:0;color:#ffffff;font-size:24px;font-weight:800;'>"
+        "    Enrollment Confirmed!</h1>"
+        "  <p style='margin:6px 0 0;color:rgba(255,255,255,.80);font-size:14px;'>"
+        "    Driving School App</p>"
+        "</td></tr>"
+
+        // body
+        "<tr><td style='padding:40px 48px 32px;'>"
+        "  <p style='margin:0 0 8px;color:#374151;font-size:15px;'>Dear "
+        + studentNameHtml +
+        ",</p>"
+        "  <p style='margin:0 0 28px;color:#374151;font-size:15px;line-height:1.6;'>"
+        "    <strong>Congratulations!</strong> Your enrollment request has been "
+        "    <span style='color:#10B981;font-weight:700;'>accepted</span>. "
+        "    You can now start your driving training journey."
+        "  </p>"
+
+        // info box
+        "  <table width='100%' cellpadding='0' cellspacing='0'"
+        "    style='background:#F0FDF9;border:2px solid #99F6E4;"
+        "    border-radius:14px;margin:0 0 28px;'>"
+        "  <tr><td style='padding:24px 28px;'>"
+        "    <p style='margin:0 0 10px;color:#0f766e;font-size:12px;"
+        "      font-weight:700;letter-spacing:2px;text-transform:uppercase;'>"
+        "      Your Details</p>"
+        "    <table width='100%'>"
+        "    <tr><td style='color:#374151;font-size:14px;padding:4px 0;"
+        "      font-weight:600;width:130px;'>&#x1F3EB;&nbsp; School</td>"
+        "        <td style='color:#374151;font-size:14px;padding:4px 0;'>"
+        + schoolNameHtml +
+        "</td></tr>"
+        "    <tr><td style='color:#374151;font-size:14px;padding:4px 0;"
+        "      font-weight:600;'>&#x1F9D1;&#x200D;&#x1F3EB;&nbsp; Instructor</td>"
+        "        <td style='color:#374151;font-size:14px;padding:4px 0;'>"
+        + instrNameHtml +
+        "</td></tr>"
+        "    </table>"
+        "  </td></tr></table>"
+
+        // next steps
+        "  <table width='100%' cellpadding='0' cellspacing='0'><tr>"
+        "    <td style='background:#FEF3C7;border-left:4px solid #F59E0B;"
+        "      border-radius:0 8px 8px 0;padding:12px 16px;'>"
+        "      <p style='margin:0;color:#92400E;font-size:13px;font-weight:600;'>"
+        "        &#x1F4F1;&nbsp; Log in to the app to start your Code, Circuit"
+        "        &amp; Parking training."
+        "      </p>"
+        "    </td>"
+        "  </tr></table>"
+
+        "  <p style='margin:28px 0 0;color:#9CA3AF;font-size:12px;line-height:1.6;'>"
+        "    If you have any questions, please contact your driving school directly."
+        "  </p>"
+        "</td></tr>"
+
+        // footer
+        "<tr><td style='background:#F9FAFB;border-top:1px solid #E5E7EB;"
+        "  padding:20px 48px;text-align:center;'>"
+        "  <p style='margin:0;color:#9CA3AF;font-size:12px;'>"
+        "    &copy; 2026 Driving School App &nbsp;&bull;&nbsp; All rights reserved"
+        "  </p>"
+        "</td></tr>"
+
+        "</table></td></tr></table>"
+        "</body></html>";
+
+    const QByteArray boundary = "----DS_ENROLL_MIME_7a2f";
+    QByteArray body =
+        "From: Driving School <" + fromEmail.toLatin1() + ">\r\n"
+        "To: " + toEmail.toLatin1() + "\r\n"
+        "Subject: =?UTF-8?Q?Enrollment_Confirmed_=E2=80=94_Driving_School_App?=\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n"
+        "\r\n"
+        "--" + boundary + "\r\n"
+        "Content-Type: text/plain; charset=UTF-8\r\n"
+        "Content-Transfer-Encoding: 8bit\r\n"
+        "\r\n" + plain +
+        "\r\n--" + boundary + "\r\n"
+        "Content-Type: text/html; charset=UTF-8\r\n"
+        "Content-Transfer-Encoding: 8bit\r\n"
+        "\r\n" + html +
+        "\r\n--" + boundary + "--\r\n";
+
+    // Write to temp file
+    QTemporaryFile *tmp = new QTemporaryFile(parent);
+    tmp->setAutoRemove(true);
+    if (!tmp->open()) return;
+    tmp->write(body);
+    tmp->flush();
+
+    QStringList args;
+    args << "--url"  << "smtps://smtp.gmail.com:465"
+         << "--insecure"
+         << "--user" << (fromEmail + ":" + appPassword)
+         << "--mail-from" << fromEmail
+         << "--mail-rcpt"  << toEmail
+         << "--upload-file" << tmp->fileName()
+         << "--silent";
+
+    QProcess *proc = new QProcess(parent);
+    QObject::connect(proc, QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+                     parent, [proc, tmp](int exitCode, QProcess::ExitStatus) {
+        if (exitCode != 0)
+            qDebug() << "[Enrollment email] curl error:" << proc->readAll();
+        else
+            qDebug() << "[Enrollment email] sent successfully.";
+        proc->deleteLater();
+        tmp->close();
+        tmp->deleteLater();
+    });
+    proc->start("C:/Windows/System32/curl.exe", args);
 }
 
 void InstructorDashboard::onAcceptStudent(int studentId)
@@ -656,15 +1199,15 @@ void InstructorDashboard::onAcceptStudent(int studentId)
         return;
     }
 
-    // Fetch student details to sync into Circuit STUDENTS table
+    // Fetch student details to sync into Circuit STUDENTS table + send email
     QSqlQuery fetch;
     fetch.prepare("SELECT name, email, phone FROM students WHERE id = ?");
     fetch.addBindValue(studentId);
     if (fetch.exec() && fetch.next()) {
-        QString fullName = fetch.value(0).toString().trimmed();
+        QString fullName  = fetch.value(0).toString().trimmed();
         int sp = fullName.indexOf(' ');
-        QString firstName = (sp > 0) ? fullName.left(sp) : fullName;
-        QString lastName  = (sp > 0) ? fullName.mid(sp + 1) : QString();
+        QString firstName = (sp > 0) ? fullName.left(sp)   : fullName;
+        QString lastName  = (sp > 0) ? fullName.mid(sp + 1): QString();
         QString email     = fetch.value(1).toString();
         QString phone     = fetch.value(2).toString();
 
@@ -676,9 +1219,28 @@ void InstructorDashboard::onAcceptStudent(int studentId)
             CircuitDB::instance()->initialize(p);
         }
         CircuitDB::instance()->syncStudent(studentId, firstName, lastName, email, phone, schoolId);
+
+        // ── Fetch school name & instructor name for the email ──
+        QString schoolName = "Driving School";
+        QSqlQuery sq;
+        sq.prepare("SELECT name FROM driving_schools WHERE id = ?");
+        sq.addBindValue(schoolId);
+        if (sq.exec() && sq.next()) schoolName = sq.value(0).toString();
+
+        QString instrName = "Your Instructor";
+        QSqlQuery iq;
+        iq.prepare("SELECT full_name FROM instructors WHERE id = ?");
+        iq.addBindValue(instructorId);
+        if (iq.exec() && iq.next()) instrName = iq.value(0).toString();
+
+        // ── Send enrollment confirmation email (async, non-blocking) ──
+        if (!email.isEmpty())
+            sendEnrollmentEmail(email, fullName, schoolName, instrName, this);
     }
 
-    QMessageBox::information(this, "Success", "Student request approved!");
+    QMessageBox::information(this, "Success",
+        QString::fromUtf8("Student request approved!\n"
+                          "A confirmation email has been sent to the student."));
     loadData();
 }
 
@@ -1004,7 +1566,12 @@ void InstructorDashboard::onAddVehicle()
 
 void InstructorDashboard::onLogoutClicked()
 {
+    // Reset global stylesheet so the login page renders cleanly
+    qApp->setStyleSheet("");
+
     MainWindow *loginWindow = new MainWindow();
+    loginWindow->show();
     loginWindow->showMaximized();
-    this->close();
+    this->hide();
+    this->deleteLater();
 }

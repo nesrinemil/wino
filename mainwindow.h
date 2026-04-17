@@ -62,8 +62,16 @@ private:
     // Email verification
     QString m_verificationCode;
     bool    m_fingerprintDone = false;
+    QString m_resetEmail;           // email being reset (stored after code verification)
+    QString m_studentPhotoPath;     // path to selected/captured student photo
     void sendVerificationEmail(const QString &toEmail, const QString &code,
                                std::function<void(bool, QString)> callback);
+
+    // New-password page (built programmatically, index 6 in stackedWidget)
+    void buildResetPasswordPage();
+    bool updatePasswordInDB(const QString &email, const QString &newHash);
+    class QLineEdit *m_editNewPass    = nullptr;
+    class QLineEdit *m_editConfirmPass = nullptr;
 
     // UI helpers
     void showToast(const QString &message, bool isError = true);

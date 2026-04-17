@@ -1,7 +1,6 @@
 #ifndef WINO_INSTRUCTORDASHBOARD_H
 #define WINO_INSTRUCTORDASHBOARD_H
 
-#include <QMainWindow>
 #include <QWidget>
 #include <QLabel>
 #include <QTableWidget>
@@ -23,7 +22,7 @@
 #include <QDoubleSpinBox>
 #include "weatherservice.h"
 
-class WinoInstructorDashboard : public QMainWindow
+class WinoInstructorDashboard : public QWidget
 {
     Q_OBJECT
 

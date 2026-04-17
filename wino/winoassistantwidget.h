@@ -8,7 +8,9 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QFrame>
 #include <QJsonArray>
+#include "thememanager.h"
 
 class QProcess;
 class QTemporaryFile;
@@ -26,6 +28,8 @@ private slots:
     void onSendMessage();
     void onAIFinished(int exitCode, int exitStatus);
     void showApiKeyDialog();
+    void onMicClicked();
+    void applyTheme();
 
 private:
     void setupUI();
@@ -48,6 +52,8 @@ private:
     QPushButton   *m_sendBtn;
     QLabel        *m_typingLabel;
     QPushButton   *m_settingsBtn;
+    QPushButton   *m_micBtn      = nullptr;
+    QFrame        *m_inputBar    = nullptr;
 
     QString        m_apiKey;
     QJsonArray     m_history;    // multi-turn context

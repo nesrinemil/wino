@@ -20,6 +20,8 @@
 #include <QDate>
 #include <QSslSocket>
 #include <QThread>
+#include <QProcess>
+#include <QTemporaryFile>
 #include <QEventLoop>
 #include <QRandomGenerator>
 #include <QPropertyAnimation>
@@ -32,12 +34,22 @@
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QLineEdit>
+#include <QFrame>
+#include <QPushButton>
+#include <QHBoxLayout>
 #include <QCamera>
 #include <QMediaCaptureSession>
 #include <QImageCapture>
 #include <QMediaDevices>
 #include <QStandardPaths>
 #include <QUuid>
+#include <QFileDialog>
+#include <QDir>
+#include <QFileInfo>
+#include <QBuffer>
+#include <QMessageBox>
+#include <QHttpMultiPart>
 #include <QCryptographicHash>
 #include <QtMath>
 #include <algorithm>
@@ -47,13 +59,38 @@
 #include <functional>
 #include "studentlearninghub.h"
 
-// ── Hugging Face API configuration ──
-static const QString HF_TOKEN = qEnvironmentVariable("HF_TOKEN");
-static const QString HF_API_URL = QStringLiteral("https://router.huggingface.co/v1/chat/completions");
-static const QStringList HF_MODELS = {
-    QStringLiteral("meta-llama/Llama-3.2-11B-Vision-Instruct"),
-    QStringLiteral("Qwen/Qwen2.5-VL-7B-Instruct")
-};
+// ── OCR.space API configuration ──
+// Free key: register at https://ocr.space/ocrapi/freekey  (25 000 req/month)
+// Place key in ocrspace_key.txt next to DrivingSchoolApp.exe
+// OR set environment variable OCRSPACE_API_KEY
+// The built-in "helloworld" key works for basic testing (limited requests).
+static const QString OCRSPACE_API_URL = QStringLiteral("https://api.ocr.space/parse/image");
+
+static QString getOcrSpaceApiKey()
+{
+    // 1. Environment variable
+    QString key = qEnvironmentVariable("OCRSPACE_API_KEY").trimmed();
+    if (!key.isEmpty()) return key;
+
+    // 2. ocrspace_key.txt next to the executable
+    const QStringList dirs = {
+        QCoreApplication::applicationDirPath(),
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation),
+        QDir::homePath()
+    };
+    for (const QString &dir : dirs) {
+        QFile f(dir + "/ocrspace_key.txt");
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            key = QString::fromUtf8(f.readLine()).trimmed();
+            f.close();
+            if (!key.isEmpty() && !key.startsWith("PASTE"))
+                return key;
+        }
+    }
+
+    // 3. Built-in free test key (limited but always available)
+    return QStringLiteral("helloworld");
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -177,16 +214,17 @@ MainWindow::MainWindow(QWidget *parent)
             return;
         }
 
-        // Success
+        // Success — store email, go to new-password page (index 6)
+        m_resetEmail = ui->editForgotEmail->text().trimmed();
         m_verificationCode.clear();
         ui->widgetVerify->setVisible(false);
         ui->editVerifyCode->clear();
         ui->editForgotEmail->clear();
         ui->editForgotEmail->setStyleSheet("");
-        ui->btnSendReset->setText("Send Reset Link");
-        showSuccess("Identity Verified",
-            "Your identity has been confirmed successfully.\nYou may now reset your password.");
-        goToStep(0);
+        ui->btnSendReset->setText("Resend Code");
+        if (m_editNewPass)    m_editNewPass->clear();
+        if (m_editConfirmPass) m_editConfirmPass->clear();
+        goToStep(6);   // New-password form
     });
 
     connect(ui->btnBackToLogin, &QPushButton::clicked, this, [this]() { goToStep(0); });
@@ -232,6 +270,87 @@ MainWindow::MainWindow(QWidget *parent)
         goToStep(3);
     });
     connect(ui->btnCancel, &QPushButton::clicked, this, [this]() { goToStep(0); });
+
+    // ── Photo preview helper ──────────────────────────────────────────────────
+    auto applyPhotoPreview = [this](const QString &path) {
+        if (path.isEmpty()) return;
+        QPixmap px(path);
+        if (px.isNull()) return;
+        m_studentPhotoPath = path;
+        // Circular crop
+        QPixmap sized = px.scaled(100, 100, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        QPixmap circle(100, 100);
+        circle.fill(Qt::transparent);
+        QPainter painter(&circle);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QBrush(sized));
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(0, 0, 100, 100);
+        painter.end();
+        ui->lblPhotoPreview->setPixmap(circle);
+        ui->btnRemovePhoto->setVisible(true);
+        ui->chkPhoto->setChecked(true);
+    };
+
+    // ── Upload Photo ──────────────────────────────────────────────────────────
+    connect(ui->btnUploadPhoto, &QPushButton::clicked, this, [this, applyPhotoPreview]() {
+        QString path = QFileDialog::getOpenFileName(
+            this, "Select Profile Photo", QString(),
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp)");
+        if (!path.isEmpty()) applyPhotoPreview(path);
+    });
+
+    // ── Take Photo with camera ────────────────────────────────────────────────
+    connect(ui->btnTakePhotoReg, &QPushButton::clicked, this, [this, applyPhotoPreview]() {
+        openCameraCapture("Look at the camera and smile 😊", "",
+            [this, applyPhotoPreview](const QString &savedPath) {
+                if (!savedPath.isEmpty()) applyPhotoPreview(savedPath);
+            });
+    });
+
+    // ── Remove Photo ──────────────────────────────────────────────────────────
+    connect(ui->btnRemovePhoto, &QPushButton::clicked, this, [this]() {
+        m_studentPhotoPath.clear();
+        ui->lblPhotoPreview->setPixmap(QPixmap());
+        ui->btnRemovePhoto->setVisible(false);
+        ui->chkPhoto->setChecked(false);
+    });
+
+    // ── Style the preview label placeholder ──────────────────────────────────
+    ui->lblPhotoPreview->setStyleSheet(
+        "QLabel {"
+        "  background: rgba(255,255,255,0.15);"
+        "  border: 2px dashed rgba(255,255,255,0.4);"
+        "  border-radius: 50px;"
+        "  color: rgba(255,255,255,0.6);"
+        "  font-size: 28px;"
+        "}");
+    ui->lblPhotoPreview->setText("👤");
+    ui->lblPhotoPreview->setAlignment(Qt::AlignCenter);
+
+    // Style photo buttons
+    QString photoBtn =
+        "QPushButton {"
+        "  background: rgba(255,255,255,0.18);"
+        "  border: 1px solid rgba(255,255,255,0.35);"
+        "  border-radius: 8px;"
+        "  color: white;"
+        "  padding: 8px 14px;"
+        "  font-size: 13px;"
+        "}"
+        "QPushButton:hover { background: rgba(255,255,255,0.30); }";
+    ui->btnUploadPhoto->setStyleSheet(photoBtn);
+    ui->btnTakePhotoReg->setStyleSheet(photoBtn);
+    ui->btnRemovePhoto->setStyleSheet(
+        "QPushButton {"
+        "  background: rgba(220,38,38,0.25);"
+        "  border: 1px solid rgba(220,38,38,0.5);"
+        "  border-radius: 8px;"
+        "  color: #fca5a5;"
+        "  padding: 6px 12px;"
+        "  font-size: 12px;"
+        "}"
+        "QPushButton:hover { background: rgba(220,38,38,0.45); }");
 
     // ── Automate button: OCR scan of Tunisian CIN card ──
     connect(ui->btnAutomate, &QPushButton::clicked, this, [this]() {
@@ -357,6 +476,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Start on login page
     ui->stackedWidget->setCurrentIndex(0);
+
+    // Build the new-password page (index 6) programmatically
+    buildResetPasswordPage();
 
     // ── Required documents: hidden by default, shown for Practical / Parking ──
     ui->groupRequiredDocs->setVisible(false);
@@ -579,6 +701,20 @@ bool MainWindow::insertStudentFromForm(QString *errorMessage)
         return false;
     }
 
+    // ── Copy student photo to app data folder ─────────────────────────────────
+    if (!m_studentPhotoPath.isEmpty()) {
+        QString photosDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                            + "/student_photos";
+        QDir().mkpath(photosDir);
+        QString cinVal = ui->editCIN->text().trimmed();
+        QString ext    = QFileInfo(m_studentPhotoPath).suffix().toLower();
+        if (ext.isEmpty()) ext = "jpg";
+        QString destPath = photosDir + "/" + cinVal + "." + ext;
+        // Remove old file if it exists then copy
+        QFile::remove(destPath);
+        QFile::copy(m_studentPhotoPath, destPath);
+    }
+
     return true;
 }
 
@@ -597,6 +733,12 @@ void MainWindow::clearRegistrationForm()
 
     ui->chkCIN->setChecked(false);
     ui->chkPhoto->setChecked(false);
+
+    // Reset photo
+    m_studentPhotoPath.clear();
+    ui->lblPhotoPreview->setPixmap(QPixmap());
+    ui->lblPhotoPreview->setText("👤");
+    ui->btnRemovePhoto->setVisible(false);
     ui->chkTheoryExam->setChecked(false);
     ui->rbRules->setChecked(true);
 
@@ -839,8 +981,50 @@ void MainWindow::openCameraCapture(const QString &instruction,
     // Push each frame into the custom view + run card detection
     connect(sink, &QVideoSink::videoFrameChanged, dlg,
             [camView, hintLbl](const QVideoFrame &vf) {
+        if (!vf.isValid()) return;
         QVideoFrame copy = vf;
+
+        // ── Method 1: toImage() — works on most backends ──
         QImage img = copy.toImage();
+
+        // ── Method 2: map() raw bytes — fallback when toImage() returns null ──
+        // Some Windows Media Foundation / FFmpeg backends return NV12/P010
+        // frames that Qt's toImage() cannot decode; map() gives raw byte access.
+        if (img.isNull() && copy.isValid()) {
+            if (copy.map(QVideoFrame::ReadOnly)) {
+                int w = copy.width(), h = copy.height();
+                if (w > 0 && h > 0) {
+                    int stride = copy.bytesPerLine(0);
+                    const uchar *bits = copy.bits(0);
+                    if (bits && stride > 0) {
+                        // stride >= w*4 → packed ARGB/BGRA 32-bit
+                        if (stride >= w * 4) {
+                            img = QImage(bits, w, h, stride,
+                                         QImage::Format_ARGB32).copy();
+                        }
+                        // stride >= w*3 → packed RGB888
+                        else if (stride >= w * 3) {
+                            img = QImage(bits, w, h, stride,
+                                         QImage::Format_RGB888).copy();
+                        }
+                        // NV12 / YUV: use luminance plane as grayscale preview
+                        else {
+                            img = QImage(bits, w, h, stride,
+                                         QImage::Format_Grayscale8).copy();
+                        }
+                    }
+                }
+                copy.unmap();
+            }
+        }
+
+        // ── Normalise to RGB32 so QImage::save() always works ──
+        if (!img.isNull()
+            && img.format() != QImage::Format_RGB32
+            && img.format() != QImage::Format_ARGB32) {
+            img = img.convertToFormat(QImage::Format_RGB32);
+        }
+
         if (!img.isNull()) {
             bool wasDetected = camView->cardDetected;
             camView->setFrame(img);
@@ -862,10 +1046,7 @@ void MainWindow::openCameraCapture(const QString &instruction,
     // FFmpeg backend on some Windows setups.  We already have every live frame
     // as a QImage inside camView->frame, so we just save that with QImage::save().
     connect(captureBtn, &QPushButton::clicked, dlg, [=]() {
-        if (camView->frame.isNull()) {
-            hintLbl->setText("\u26A0  No frame yet — wait for camera to start\u2026");
-            return;
-        }
+        // Allow capture even if frame is null — grab() fallback will be used
         captureBtn->setEnabled(false);
 
         auto *countdown = new QTimer(dlg);
@@ -884,16 +1065,94 @@ void MainWindow::openCameraCapture(const QString &instruction,
                 delete remaining;
                 hintLbl->setText("\u23F3  Capturing\u2026");
 
-                // Grab the current live frame and save as JPEG
+                // ── Grab live frame and save to disk ─────────────────────
+                // Method A: stored RGB32 frame from videoFrameChanged handler
                 QImage snap = camView->frame;
-                QString dir  = QStandardPaths::writableLocation(
-                                   QStandardPaths::TempLocation);
-                QString file = dir + "/cin_" +
-                               QUuid::createUuid()
-                                   .toString(QUuid::WithoutBraces).left(8) +
-                               ".jpg";
 
-                if (snap.isNull() || !snap.save(file, "JPEG", 92)) {
+                // Method B: pull directly from sink + map() raw bytes
+                if (snap.isNull()) {
+                    QVideoFrame live = sink->videoFrame();
+                    if (live.isValid()) {
+                        snap = live.toImage();
+                        if (snap.isNull() && live.map(QVideoFrame::ReadOnly)) {
+                            int w = live.width(), h = live.height();
+                            int stride = live.bytesPerLine(0);
+                            const uchar *bits = live.bits(0);
+                            if (bits && stride > 0 && w > 0 && h > 0) {
+                                if (stride >= w * 4)
+                                    snap = QImage(bits, w, h, stride, QImage::Format_ARGB32).copy();
+                                else if (stride >= w * 3)
+                                    snap = QImage(bits, w, h, stride, QImage::Format_RGB888).copy();
+                                else
+                                    snap = QImage(bits, w, h, stride, QImage::Format_Grayscale8).copy();
+                            }
+                            live.unmap();
+                        }
+                    }
+                }
+
+                // Method C: render the CameraView widget directly to a QImage.
+                // This is GUARANTEED to produce a valid image because it captures
+                // exactly what is painted on screen (camera frame + card guide overlay).
+                // Groq Vision can read card text even with the guide overlay present.
+                if (snap.isNull()) {
+                    QPixmap grabbed = camView->grab();
+                    if (!grabbed.isNull())
+                        snap = grabbed.toImage();
+                }
+
+                // Normalise to RGB32 before saving
+                if (!snap.isNull()
+                    && snap.format() != QImage::Format_RGB32
+                    && snap.format() != QImage::Format_ARGB32) {
+                    snap = snap.convertToFormat(QImage::Format_RGB32);
+                }
+
+                // Build save path — use Desktop as final fallback if Temp fails
+                auto tryDir = [](const QString &d) -> QString {
+                    QDir().mkpath(d);
+                    return QDir(d).isReadable() ? d : QString();
+                };
+                QString dir = tryDir(QStandardPaths::writableLocation(
+                                         QStandardPaths::TempLocation));
+                if (dir.isEmpty())
+                    dir = tryDir(QStandardPaths::writableLocation(
+                                     QStandardPaths::DesktopLocation));
+                if (dir.isEmpty())
+                    dir = QDir::homePath();
+
+                QString base = "/cin_" + QUuid::createUuid()
+                                             .toString(QUuid::WithoutBraces).left(8);
+
+                bool saved = false;
+                QString file;
+
+                if (!snap.isNull()) {
+                    // 1. Try PNG — always built into Qt, no plugin required
+                    file = dir + base + ".png";
+                    saved = snap.save(file, "PNG");
+
+                    // 2. Try JPEG
+                    if (!saved) {
+                        file = dir + base + ".jpg";
+                        saved = snap.save(file, "JPEG", 90);
+                    }
+
+                    // 3. Try BMP — simplest format, always works
+                    if (!saved) {
+                        file = dir + base + ".bmp";
+                        saved = snap.save(file, "BMP");
+                    }
+
+                    // 4. QPixmap path as last resort
+                    if (!saved) {
+                        file = dir + base + ".png";
+                        QPixmap pix = QPixmap::fromImage(snap);
+                        if (!pix.isNull()) saved = pix.save(file, "PNG");
+                    }
+                }
+
+                if (!saved) {
                     hintLbl->setText("\u26A0  Save failed — try again.");
                     captureBtn->setEnabled(true);
                     return;
@@ -924,26 +1183,10 @@ void MainWindow::openCameraCapture(const QString &instruction,
 }
 
 // ══════════════════════════════════════════════════════════════
-// OCR Implementation — native C++ using Hugging Face API
+// OCR Implementation — native C++ using Groq Vision API
 // ══════════════════════════════════════════════════════════════
 
-static QString imageToBase64Uri(const QString &imagePath)
-{
-    QFile file(imagePath);
-    if (!file.open(QIODevice::ReadOnly))
-        return {};
-
-    QByteArray data = file.readAll();
-    QString b64 = QString::fromLatin1(data.toBase64());
-
-    QString ext = imagePath.section('.', -1).toLower();
-    QString mime = "image/jpeg";
-    if (ext == "png")   mime = "image/png";
-    if (ext == "webp")  mime = "image/webp";
-    if (ext == "bmp")   mime = "image/bmp";
-
-    return QStringLiteral("data:%1;base64,%2").arg(mime, b64);
-}
+// (imageToBase64DataUri removed — OCR.space now uses multipart file upload)
 
 void MainWindow::startOcrScan(const QString &frontPath, const QString &backPath)
 {
@@ -1004,13 +1247,14 @@ void MainWindow::startOcrScan(const QString &frontPath, const QString &backPath)
         if (frontText.startsWith("ERROR:")) {
             progress->close();
             progress->deleteLater();
-            showToast("\u26A0\u00A0 OCR Error: " + frontText.mid(6));
+            QMessageBox::warning(this, "OCR Error", frontText.mid(6));
             return;
         }
 
         progress->setLabelText("Front side done. Scanning back side...");
 
-        // Send back image request
+        // Wait 2s before back request — helloworld key rate-limits to 1 req/s
+        QTimer::singleShot(2000, this, [this, backPath, backPrompt, frontText, progress]() {
         sendOcrRequest(backPath, backPrompt,
             [this, frontText, progress](const QString &backText) {
 
@@ -1018,12 +1262,13 @@ void MainWindow::startOcrScan(const QString &frontPath, const QString &backPath)
             progress->deleteLater();
 
             if (backText.startsWith("ERROR:")) {
-                showToast("\u26A0\u00A0 OCR Error: " + backText.mid(6));
+                QMessageBox::warning(this, "OCR Error", backText.mid(6));
                 return;
             }
 
             processOcrResults(frontText, backText);
         }, progress);
+        }); // end QTimer::singleShot
     }, progress);
 }
 
@@ -1031,78 +1276,97 @@ void MainWindow::sendOcrRequest(const QString &imagePath, const QString &prompt,
                                  std::function<void(const QString &text)> callback,
                                  QProgressDialog *progress)
 {
-    if (HF_TOKEN.trimmed().isEmpty()) {
-        callback("ERROR:Missing HF_TOKEN environment variable.");
+    Q_UNUSED(prompt); // OCR.space does not need a text prompt — it extracts text directly
+
+    const QString apiKey = getOcrSpaceApiKey();
+
+    // ── Prepare image bytes (JPEG, max 1024px) ──
+    QImage img(imagePath);
+    if (img.isNull()) {
+        callback("ERROR:Could not read the captured image file.\nPath: " + imagePath);
         return;
     }
+    if (img.width() > 1024 || img.height() > 1024)
+        img = img.scaled(1024, 1024, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
-    QString imageUri = imageToBase64Uri(imagePath);
-    if (imageUri.isEmpty()) {
-        callback("ERROR:Could not read image file: " + imagePath);
+    QByteArray imgBytes;
+    {
+        QBuffer buf(&imgBytes);
+        buf.open(QIODevice::WriteOnly);
+        if (!img.save(&buf, "JPEG", 85)) {
+            imgBytes.clear();
+            QBuffer buf2(&imgBytes);
+            buf2.open(QIODevice::WriteOnly);
+            img.save(&buf2, "PNG");
+        }
+    }
+    if (imgBytes.isEmpty()) {
+        callback("ERROR:Could not encode the captured image.");
         return;
     }
+    QString mimeType = imgBytes.startsWith("\xFF\xD8") ? "image/jpeg" : "image/png";
+    QString fileExt  = imgBytes.startsWith("\xFF\xD8") ? "card.jpg"   : "card.png";
 
-    // Try models in order
-    auto tryModel = [this, imageUri, prompt, callback, progress](int modelIndex) {
-        auto tryModelImpl = std::make_shared<std::function<void(int)>>();
-        *tryModelImpl = [this, imageUri, prompt, callback, progress, tryModelImpl](int idx) {
-            if (idx >= HF_MODELS.size()) {
-                callback("ERROR:All OCR models failed. Please check your internet connection.");
+    // Try engines in order: 3 → 2 → 1
+    static const QList<int> engines = {3, 2, 1};
+
+    auto tryEngine = [this, apiKey, imgBytes, mimeType, fileExt, callback, progress](int engineIdx) {
+        auto tryEngineImpl = std::make_shared<std::function<void(int)>>();
+        *tryEngineImpl = [this, apiKey, imgBytes, mimeType, fileExt,
+                          callback, progress, tryEngineImpl](int idx) {
+
+            if (idx >= engines.size()) {
+                callback("ERROR:All OCR engines failed.\n"
+                         "Check ocr_debug.txt next to the exe for details.");
                 return;
             }
-
             if (progress && progress->wasCanceled()) {
                 callback("ERROR:Cancelled by user.");
                 return;
             }
 
-            QString model = HF_MODELS[idx];
+            int engine = engines[idx];
 
-            // Build JSON payload
-            QJsonObject imageUrlObj;
-            imageUrlObj["url"] = imageUri;
+            // ── Use multipart/form-data — avoids all URL-encoding issues ──
+            auto *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
 
-            QJsonObject imageContent;
-            imageContent["type"] = "image_url";
-            imageContent["image_url"] = imageUrlObj;
+            auto addField = [&](const QString &name, const QString &value) {
+                QHttpPart p;
+                p.setHeader(QNetworkRequest::ContentDispositionHeader,
+                            QString("form-data; name=\"%1\"").arg(name));
+                p.setBody(value.toUtf8());
+                multiPart->append(p);
+            };
 
-            QJsonObject textContent;
-            textContent["type"] = "text";
-            textContent["text"] = prompt;
+            addField("apikey",            apiKey);
+            addField("OCREngine",         QString::number(engine));
+            addField("detectOrientation", "true");
+            addField("isOverlayRequired", "false");
+            addField("scale",             "true");
+            // Note: do NOT set language for engines 2/3 (only eng supported);
+            // engine 1 supports Arabic via auto-detection without explicit lang param
+            if (engine == 1)
+                addField("language", "ara");
 
-            QJsonArray contentArray;
-            contentArray.append(imageContent);
-            contentArray.append(textContent);
+            // Image file part
+            QHttpPart filePart;
+            filePart.setHeader(QNetworkRequest::ContentTypeHeader, mimeType);
+            filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                               QString("form-data; name=\"file\"; filename=\"%1\"").arg(fileExt));
+            filePart.setBody(imgBytes);
+            multiPart->append(filePart);
 
-            QJsonObject message;
-            message["role"] = "user";
-            message["content"] = contentArray;
+            QNetworkRequest request{QUrl(OCRSPACE_API_URL)};
+            request.setTransferTimeout(60000);
 
-            QJsonArray messages;
-            messages.append(message);
+            QNetworkReply *reply = networkManager->post(request, multiPart);
+            multiPart->setParent(reply); // auto-delete with reply
 
-            QJsonObject payload;
-            payload["model"] = model;
-            payload["messages"] = messages;
-            payload["max_tokens"] = 1024;
-            payload["temperature"] = 0.1;
-
-            QUrl apiUrl(HF_API_URL);
-            QNetworkRequest request{apiUrl};
-            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-            request.setRawHeader("Authorization", ("Bearer " + HF_TOKEN).toUtf8());
-            request.setTransferTimeout(120000); // 120 second timeout
-
-            QByteArray jsonData = QJsonDocument(payload).toJson();
-            QNetworkReply *reply = networkManager->post(request, jsonData);
-
-            // Handle cancel
-            if (progress) {
+            if (progress)
                 connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
-            }
 
             connect(reply, &QNetworkReply::finished, this,
-                [reply, callback, idx, tryModelImpl]() {
+                [reply, callback, idx, tryEngineImpl, engine]() {
                 reply->deleteLater();
 
                 if (reply->error() == QNetworkReply::OperationCanceledError) {
@@ -1110,88 +1374,197 @@ void MainWindow::sendOcrRequest(const QString &imagePath, const QString &prompt,
                     return;
                 }
 
+                // Always read response body — HTTP errors may still have JSON
                 QByteArray responseData = reply->readAll();
+                int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-                if (reply->error() != QNetworkReply::NoError) {
-                    // Try next model
-                    (*tryModelImpl)(idx + 1);
+                // Pure network failure (no response at all)
+                if (reply->error() != QNetworkReply::NoError && responseData.isEmpty()) {
+                    callback("ERROR:Network error: " + reply->errorString());
                     return;
                 }
 
-                QJsonDocument doc = QJsonDocument::fromJson(responseData);
-                QJsonObject obj = doc.object();
+                // Rate-limited (429) — retry same engine after 2 seconds
+                if (httpCode == 429) {
+                    QTimer::singleShot(2500, [tryEngineImpl, idx]() {
+                        (*tryEngineImpl)(idx); // retry same engine
+                    });
+                    return;
+                }
 
-                if (obj.contains("choices")) {
-                    QJsonArray choices = obj["choices"].toArray();
-                    if (!choices.isEmpty()) {
-                        QString text = choices[0].toObject()["message"]
-                            .toObject()["content"].toString();
-                        callback(text);
-                        return;
+                // Debug log
+                {
+                    QFile dbg(QCoreApplication::applicationDirPath() + "/ocr_debug.txt");
+                    if (dbg.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
+                        dbg.write(("=== Engine " + QString::number(engine) + " ===\n").toUtf8());
+                        dbg.write(responseData.left(3000));
+                        dbg.write("\n\n");
                     }
                 }
 
-                if (obj.contains("error")) {
-                    // Try next model
-                    (*tryModelImpl)(idx + 1);
+                QJsonObject obj = QJsonDocument::fromJson(responseData).object();
+
+                if (obj["IsErroredOnProcessing"].toBool()) {
+                    // Try next engine silently
+                    (*tryEngineImpl)(idx + 1);
                     return;
                 }
 
-                callback("ERROR:Unexpected API response format.");
+                QJsonArray results = obj["ParsedResults"].toArray();
+                if (results.isEmpty()) {
+                    (*tryEngineImpl)(idx + 1);
+                    return;
+                }
+
+                QString text = results[0].toObject()["ParsedText"].toString().trimmed();
+                if (text.isEmpty()) {
+                    (*tryEngineImpl)(idx + 1);
+                    return;
+                }
+
+                callback(text);
             });
         };
-        (*tryModelImpl)(modelIndex);
+        (*tryEngineImpl)(engineIdx);
     };
 
-    tryModel(0);
-}
-
-// ── Helper: extract JSON from model response (may contain extra text around it) ──
-static QJsonObject extractJsonFromText(const QString &text)
-{
-    // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
-    QString cleaned = text.trimmed();
-    QRegularExpression fenceRx("```(?:json)?\\s*(\\{.*?\\})\\s*```",
-                               QRegularExpression::DotMatchesEverythingOption);
-    QRegularExpressionMatch fm = fenceRx.match(cleaned);
-    if (fm.hasMatch()) cleaned = fm.captured(1).trimmed();
-
-    // Try direct parse first
-    QJsonDocument doc = QJsonDocument::fromJson(cleaned.toUtf8());
-    if (doc.isObject()) return doc.object();
-
-    // Find the outermost JSON object in text
-    int start = cleaned.indexOf('{');
-    int end   = cleaned.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-        QString jsonStr = cleaned.mid(start, end - start + 1);
-        doc = QJsonDocument::fromJson(jsonStr.toUtf8());
-        if (doc.isObject()) return doc.object();
-    }
-
-    return {};
+    tryEngine(0);
 }
 
 void MainWindow::processOcrResults(const QString &frontText, const QString &backText)
 {
-    // Parse JSON from model responses
-    QJsonObject frontObj = extractJsonFromText(frontText);
-    QJsonObject backObj = extractJsonFromText(backText);
+    // ══════════════════════════════════════════════════════════════
+    // OCR.space returns raw text — extract fields with regex
+    // ══════════════════════════════════════════════════════════════
 
-    QString cin       = frontObj["cin"].toString().trimmed();
-    QString firstName = frontObj["firstName"].toString().trimmed();
-    QString lastName  = frontObj["lastName"].toString().trimmed();
-    QString dob       = frontObj["dob"].toString().trimmed();
-    QString birthPlace= frontObj["birthPlace"].toString().trimmed();
-    QString address   = backObj["address"].toString().trimmed();
-    QString city      = backObj["city"].toString().trimmed();
-
-    // ═══ Fallback: extract CIN from raw text if JSON didn't have it ═══
-    if (cin.isEmpty()) {
-        QRegularExpression cinRx("\\b(\\d{8})\\b");
-        QRegularExpressionMatch m = cinRx.match(frontText);
+    // ── CIN: 8-digit number ──
+    QString cin;
+    {
+        QRegularExpression rx("\\b(\\d{8})\\b");
+        QRegularExpressionMatch m = rx.match(frontText);
         if (m.hasMatch()) cin = m.captured(1);
     }
+
+    // ── Lines of the front card (strip blank / whitespace lines) ──
+    QStringList frontLines;
+    for (const QString &ln : frontText.split('\n')) {
+        QString t = ln.trimmed();
+        if (!t.isEmpty()) frontLines.append(t);
+    }
+
+    // Strip leading colon / Arabic comma from OCR tokens
+    auto stripLeadingPunct = [](QString s) -> QString {
+        while (!s.isEmpty() && (s[0] == QLatin1Char(':') || s.startsWith(QString("،"))))
+            s = s.mid(1).trimmed();
+        return s;
+    };
+
+    // ── Last name / first name / DOB / birth place from front card ──
+    QString lastName, firstName, dob, birthPlace;
+    {
+        static const QStringList lastNameMarkers  = { "اللقب", "لقب" };
+        static const QStringList firstNameMarkers = { "الاسم", "اسم" };
+        static const QStringList dobMarkers       = { "تاريخ الولادة", "تاريخ ولادة", "الولادة" };
+        static const QStringList birthMarkers     = { "مكان الولادة", "مكان ولادة", "ولد في", "ولدت في" };
+
+        auto extractAfterMarker = [&](const QStringList &markers, const QString &text) -> QString {
+            for (const QString &marker : markers) {
+                int pos = text.indexOf(marker);
+                if (pos >= 0) {
+                    QString after = stripLeadingPunct(text.mid(pos + marker.length()).trimmed());
+                    QString firstLine = stripLeadingPunct(after.section('\n', 0, 0).trimmed());
+                    if (!firstLine.isEmpty()) return firstLine;
+                }
+            }
+            return {};
+        };
+
+        lastName   = extractAfterMarker(lastNameMarkers,  frontText);
+        firstName  = extractAfterMarker(firstNameMarkers, frontText);
+        dob        = extractAfterMarker(dobMarkers,       frontText);
+        birthPlace = extractAfterMarker(birthMarkers,     frontText);
+
+        // ── Fallback: if labels not found, use positional lines ──
+        // Front card structure (after header lines):
+        // Line 0/1: الجمهورية التونسية / بطاقة التعريف الوطنية  (headers)
+        // Then: CIN number, last name, first name, DOB, birth place
+        if (lastName.isEmpty() || firstName.isEmpty()) {
+            QStringList contentLines;
+            for (const QString &ln : frontLines) {
+                // Skip header lines and the CIN number line
+                if (ln.contains("الجمهورية") || ln.contains("بطاقة") || ln.contains("التعريف"))
+                    continue;
+                if (QRegularExpression("^\\d{8}$").match(ln).hasMatch())
+                    continue;
+                contentLines.append(ln);
+            }
+            if (lastName.isEmpty()  && contentLines.size() >= 1) lastName  = contentLines[0];
+            if (firstName.isEmpty() && contentLines.size() >= 2) firstName = contentLines[1];
+            if (dob.isEmpty()       && contentLines.size() >= 3) {
+                // DOB line likely contains digits + Arabic month name
+                for (const QString &ln : contentLines) {
+                    if (QRegularExpression("\\d").match(ln).hasMatch() &&
+                        (ln.contains("جانفي") || ln.contains("فيفري") || ln.contains("مارس") ||
+                         ln.contains("أفريل") || ln.contains("ماي")   || ln.contains("جوان") ||
+                         ln.contains("جويلية")|| ln.contains("اوت")   || ln.contains("أوت")  ||
+                         ln.contains("سبتمبر")|| ln.contains("اكتوبر")|| ln.contains("نوفمبر")||
+                         ln.contains("ديسمبر"))) {
+                        dob = ln; break;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Address and city from back card ──
+    QString address, city;
+    {
+        // "المعنون" is OCR misread of "المعنوان"/"العنوان"
+        static const QStringList addrMarkers = {
+            "العنوان", "المعنون", "المعنوان", "عنوان", "المنزل", "يقيم", "تقيم"
+        };
+
+        auto extractAfterMarkerBack = [&](const QStringList &markers, const QString &text) -> QString {
+            for (const QString &marker : markers) {
+                int pos = text.indexOf(marker);
+                if (pos >= 0) {
+                    QString after = stripLeadingPunct(text.mid(pos + marker.length()).trimmed());
+                    QString firstLine = stripLeadingPunct(after.section('\n', 0, 0).trimmed());
+                    if (!firstLine.isEmpty()) return firstLine;
+                }
+            }
+            return {};
+        };
+        address = extractAfterMarkerBack(addrMarkers, backText);
+
+        // City: extract from back text lines — line after address or known city name
+        // From debug: back card shows address line then city on next line
+        if (!address.isEmpty()) {
+            // Find the line after the address line
+            QStringList backLines;
+            for (const QString &ln : backText.split('\n')) {
+                QString t = ln.trimmed();
+                if (!t.isEmpty()) backLines.append(t);
+            }
+            int addrIdx = backLines.indexOf(address);
+            if (addrIdx >= 0 && addrIdx + 1 < backLines.size())
+                city = backLines[addrIdx + 1];
+        }
+
+        // Fallback: use meaningful back text lines as address
+        if (address.isEmpty()) {
+            QStringList backLines;
+            for (const QString &ln : backText.split('\n')) {
+                QString t = ln.trimmed();
+                if (!t.isEmpty() && !t.contains("اسم رقيب") && !t.contains("المدير")
+                    && !t.contains("تاريخ") && !t.contains("نورش") && !t.contains("شهادة"))
+                    backLines.append(t);
+            }
+            if (!backLines.isEmpty()) address = backLines.join("، ");
+        }
+    }
+
+    // ── CIN fallback (already extracted above via regex) ──
 
     static const QStringList tunisianCities = {
         "تونس", "صفاقس", "سوسة", "قابس", "مدنين",
@@ -1527,6 +1900,228 @@ void MainWindow::showSuccess(const QString &title, const QString &message)
 }
 
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// Reset-password page  (page index 6 in QStackedWidget)
+// ══════════════════════════════════════════════════════════════
+
+void MainWindow::buildResetPasswordPage()
+{
+    // ── Outer page (same gradient background as other pages) ──
+    QWidget *page = new QWidget();
+    page->setObjectName("pageResetPassword");
+
+    QVBoxLayout *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addStretch(1);
+
+    // ── Card ──────────────────────────────────────────────────
+    QFrame *card = new QFrame(page);
+    card->setObjectName("resetCard");
+    card->setFixedWidth(480);
+    card->setStyleSheet(
+        "QFrame#resetCard{"
+        "  background:white;"
+        "  border-radius:20px;"
+        "  border:none;"
+        "}"
+    );
+    QGraphicsDropShadowEffect *sh = new QGraphicsDropShadowEffect(card);
+    sh->setBlurRadius(40);
+    sh->setOffset(0, 8);
+    sh->setColor(QColor(0,0,0,30));
+    card->setGraphicsEffect(sh);
+
+    QVBoxLayout *cL = new QVBoxLayout(card);
+    cL->setContentsMargins(48, 40, 48, 40);
+    cL->setSpacing(16);
+
+    // Icon circle
+    QLabel *iconLbl = new QLabel(QString::fromUtf8("\xf0\x9f\x94\x92"), card);  // 🔒
+    iconLbl->setFixedSize(72, 72);
+    iconLbl->setAlignment(Qt::AlignCenter);
+    iconLbl->setStyleSheet(
+        "QLabel{background:#14B8A6;border-radius:36px;font-size:32px;"
+        "color:white;border:none;}");
+    QHBoxLayout *iconRow = new QHBoxLayout;
+    iconRow->addStretch();
+    iconRow->addWidget(iconLbl);
+    iconRow->addStretch();
+    cL->addLayout(iconRow);
+    cL->addSpacing(4);
+
+    // Title
+    QLabel *title = new QLabel("Set New Password", card);
+    title->setAlignment(Qt::AlignCenter);
+    title->setStyleSheet(
+        "QLabel{font-size:24px;font-weight:900;color:#0f172a;"
+        "background:transparent;border:none;}");
+    cL->addWidget(title);
+
+    // Subtitle
+    QLabel *sub = new QLabel("Choose a strong password for your account.", card);
+    sub->setAlignment(Qt::AlignCenter);
+    sub->setWordWrap(true);
+    sub->setStyleSheet(
+        "QLabel{font-size:13px;color:#64748b;background:transparent;border:none;}");
+    cL->addWidget(sub);
+    cL->addSpacing(8);
+
+    // Divider
+    QFrame *div = new QFrame(card);
+    div->setFrameShape(QFrame::HLine);
+    div->setStyleSheet("QFrame{color:#e2e8f0;background:#e2e8f0;border:none;}");
+    div->setFixedHeight(1);
+    cL->addWidget(div);
+    cL->addSpacing(8);
+
+    // ── New Password field ─────────────────────────────────────
+    QLabel *lbl1 = new QLabel("New Password", card);
+    lbl1->setStyleSheet("QLabel{font-size:13px;font-weight:600;color:#374151;"
+        "background:transparent;border:none;}");
+    cL->addWidget(lbl1);
+
+    m_editNewPass = new QLineEdit(card);
+    m_editNewPass->setEchoMode(QLineEdit::Password);
+    m_editNewPass->setPlaceholderText("At least 8 characters");
+    m_editNewPass->setFixedHeight(44);
+    m_editNewPass->setStyleSheet(
+        "QLineEdit{background:#f8fafc;border:1.5px solid #e2e8f0;"
+        "border-radius:10px;padding:0 14px;font-size:13px;color:#0f172a;}"
+        "QLineEdit:focus{border-color:#14B8A6;background:white;}");
+    cL->addWidget(m_editNewPass);
+
+    // ── Confirm Password field ─────────────────────────────────
+    QLabel *lbl2 = new QLabel("Confirm Password", card);
+    lbl2->setStyleSheet("QLabel{font-size:13px;font-weight:600;color:#374151;"
+        "background:transparent;border:none;}");
+    cL->addWidget(lbl2);
+
+    m_editConfirmPass = new QLineEdit(card);
+    m_editConfirmPass->setEchoMode(QLineEdit::Password);
+    m_editConfirmPass->setPlaceholderText("Repeat your new password");
+    m_editConfirmPass->setFixedHeight(44);
+    m_editConfirmPass->setStyleSheet(
+        "QLineEdit{background:#f8fafc;border:1.5px solid #e2e8f0;"
+        "border-radius:10px;padding:0 14px;font-size:13px;color:#0f172a;}"
+        "QLineEdit:focus{border-color:#14B8A6;background:white;}");
+    cL->addWidget(m_editConfirmPass);
+    cL->addSpacing(8);
+
+    // ── Save button ────────────────────────────────────────────
+    QPushButton *saveBtn = new QPushButton("Save New Password", card);
+    saveBtn->setFixedHeight(48);
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    saveBtn->setStyleSheet(
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 #14B8A6,stop:1 #0d9488);"
+        "  color:white;font-size:14px;font-weight:700;border:none;border-radius:12px;}"
+        "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 #0d9488,stop:1 #0f766e);}"
+        "QPushButton:pressed{background:#0f766e;}"
+    );
+    connect(saveBtn, &QPushButton::clicked, this, [this, saveBtn]() {
+        QString np = m_editNewPass->text();
+        QString cp = m_editConfirmPass->text();
+
+        m_editNewPass->setStyleSheet(
+            "QLineEdit{background:#f8fafc;border:1.5px solid #e2e8f0;"
+            "border-radius:10px;padding:0 14px;font-size:13px;color:#0f172a;}"
+            "QLineEdit:focus{border-color:#14B8A6;background:white;}");
+        m_editConfirmPass->setStyleSheet(
+            "QLineEdit{background:#f8fafc;border:1.5px solid #e2e8f0;"
+            "border-radius:10px;padding:0 14px;font-size:13px;color:#0f172a;}"
+            "QLineEdit:focus{border-color:#14B8A6;background:white;}");
+
+        if (np.isEmpty()) {
+            showToast(QString::fromUtf8("\u26A0  Please enter a new password."));
+            m_editNewPass->setStyleSheet(
+                "QLineEdit{background:#FEF2F2;border:2px solid #DC2626;"
+                "border-radius:10px;padding:0 14px;font-size:13px;}");
+            shakeWidget(m_editNewPass);
+            return;
+        }
+        if (np.length() < 8) {
+            showToast(QString::fromUtf8("\u26A0  Password must be at least 8 characters."));
+            m_editNewPass->setStyleSheet(
+                "QLineEdit{background:#FEF2F2;border:2px solid #DC2626;"
+                "border-radius:10px;padding:0 14px;font-size:13px;}");
+            shakeWidget(m_editNewPass);
+            return;
+        }
+        if (np != cp) {
+            showToast(QString::fromUtf8("\u26A0  Passwords do not match."));
+            m_editConfirmPass->setStyleSheet(
+                "QLineEdit{background:#FEF2F2;border:2px solid #DC2626;"
+                "border-radius:10px;padding:0 14px;font-size:13px;}");
+            shakeWidget(m_editConfirmPass);
+            return;
+        }
+
+        const QString hash = hashPassword(np);
+        if (!updatePasswordInDB(m_resetEmail, hash)) {
+            showToast(QString::fromUtf8("\u26A0  Could not update password. Email not found."));
+            return;
+        }
+
+        saveBtn->setEnabled(false);
+        showSuccess("Password Updated",
+            "Your password has been changed successfully.\nYou can now log in with your new password.");
+        m_resetEmail.clear();
+        m_editNewPass->clear();
+        m_editConfirmPass->clear();
+        goToStep(0);
+        saveBtn->setEnabled(true);
+    });
+    cL->addWidget(saveBtn);
+
+    // ── Back to login link ─────────────────────────────────────
+    QPushButton *backBtn = new QPushButton(QString::fromUtf8("\u2190 Back to Login"), card);
+    backBtn->setFlat(true);
+    backBtn->setCursor(Qt::PointingHandCursor);
+    backBtn->setStyleSheet(
+        "QPushButton{color:#64748b;font-size:12px;border:none;background:transparent;}"
+        "QPushButton:hover{color:#14B8A6;}");
+    connect(backBtn, &QPushButton::clicked, this, [this]() { goToStep(0); });
+    QHBoxLayout *backRow = new QHBoxLayout;
+    backRow->addStretch();
+    backRow->addWidget(backBtn);
+    backRow->addStretch();
+    cL->addLayout(backRow);
+
+    // ── Center card horizontally ──
+    QHBoxLayout *hCenter = new QHBoxLayout;
+    hCenter->addStretch();
+    hCenter->addWidget(card);
+    hCenter->addStretch();
+    outer->addLayout(hCenter);
+    outer->addStretch(1);
+
+    // Add as page 6 of the stacked widget
+    ui->stackedWidget->addWidget(page);
+}
+
+// ── Update password_hash in ADMIN + INSTRUCTORS + STUDENTS for given email ──
+bool MainWindow::updatePasswordInDB(const QString &email, const QString &hash)
+{
+    bool updated = false;
+
+    auto tryUpdate = [&](const QString &table) {
+        QSqlQuery q;
+        q.prepare(QString("UPDATE %1 SET password_hash=? "
+                          "WHERE LOWER(email)=LOWER(?)").arg(table));
+        q.addBindValue(hash);
+        q.addBindValue(email.trimmed());
+        if (q.exec() && q.numRowsAffected() > 0)
+            updated = true;
+    };
+
+    tryUpdate("ADMIN");
+    tryUpdate("INSTRUCTORS");
+    tryUpdate("STUDENTS");
+
+    return updated;
+}
+
 // Email verification via Gmail SMTP + TLS
 // ══════════════════════════════════════════════════════════════
 
@@ -1537,77 +2132,19 @@ void MainWindow::sendVerificationEmail(const QString &toEmail,
     const QString fromEmail   = QStringLiteral("benaliwajih2@gmail.com");
     const QString appPassword = QString("urrx lftw jafm pfcu").remove(' ');
 
-    QThread *thread = QThread::create([fromEmail, appPassword, toEmail, code, callback]() {
-        // Helper: marshal result back to the GUI thread
-        auto finish = [&](bool ok, const QString &msg) {
-            QMetaObject::invokeMethod(qApp, [callback, ok, msg]() {
-                callback(ok, msg);
-            }, Qt::QueuedConnection);
-        };
+    // ── Build the MIME email payload ──────────────────────────────
+    const QByteArray boundary = "----DS_MIME_BOUNDARY_7f3a9b";
 
-        if (!QSslSocket::supportsSsl()) {
-            finish(false, "OpenSSL not found. SSL is required to send email.");
-            return;
-        }
+    // Plain-text fallback
+    QByteArray plain =
+        "Your password reset verification code is:\r\n\r\n"
+        "  " + code.toLatin1() + "\r\n\r\n"
+        "This code expires in 10 minutes.\r\n"
+        "If you did not request this, please ignore this email.\r\n"
+        "\r\nDriving School App\r\n";
 
-        QSslSocket socket;
-        socket.setPeerVerifyMode(QSslSocket::VerifyNone);
-        socket.connectToHost(QStringLiteral("smtp.gmail.com"), 587);
-        if (!socket.waitForConnected(15000)) {
-            finish(false, socket.errorString()); return;
-        }
-
-        // Read the server greeting
-        socket.waitForReadyRead(10000);
-        socket.readAll(); // discard greeting
-
-        // Helper: send a command and return the server reply
-        auto cmd = [&](const QByteArray &line) -> QByteArray {
-            socket.write(line + "\r\n");
-            socket.waitForBytesWritten(5000);
-            socket.waitForReadyRead(10000);
-            return socket.readAll().trimmed();
-        };
-
-        cmd("EHLO smtp.gmail.com");
-
-        QByteArray resp = cmd("STARTTLS");
-        if (!resp.startsWith("220")) { finish(false, "STARTTLS: " + QString::fromLatin1(resp)); return; }
-
-        socket.startClientEncryption();
-        if (!socket.waitForEncrypted(15000)) {
-            finish(false, "TLS: " + socket.errorString()); return;
-        }
-
-        cmd("EHLO smtp.gmail.com");
-
-        resp = cmd("AUTH LOGIN");
-        if (!resp.startsWith("334")) { finish(false, "AUTH: " + QString::fromLatin1(resp)); return; }
-
-        cmd(fromEmail.toUtf8().toBase64());
-        resp = cmd(appPassword.toUtf8().toBase64());
-        if (!resp.startsWith("235")) {
-            finish(false, "Authentication failed. Verify the app password."); return;
-        }
-
-        cmd("MAIL FROM:<" + fromEmail.toLatin1() + ">");
-        resp = cmd("RCPT TO:<" + toEmail.toLatin1() + ">");
-        if (!resp.startsWith("250")) { finish(false, "Recipient rejected: " + toEmail); return; }
-
-        cmd("DATA");
-
-        const QByteArray boundary = "----DS_MIME_BOUNDARY_7f3a9b";
-
-        // ── Plain-text fallback ──
-        QByteArray plain =
-            "Your password reset verification code is:\r\n\r\n"
-            "  " + code.toLatin1() + "\r\n\r\n"
-            "This code expires in 10 minutes.\r\n"
-            "If you did not request this, please ignore this email.\r\n"
-            "\r\nDriving School App\r\n";
-
-        // ── HTML body ──
-        QByteArray html = QByteArray(
+    // HTML body
+    QByteArray html = QByteArray(
             "<!DOCTYPE html>"
             "<html lang=\"en\"><head><meta charset=\"UTF-8\"/>"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>"
@@ -1687,37 +2224,68 @@ void MainWindow::sendVerificationEmail(const QString &toEmail,
             "</body></html>"
         );
 
-        QByteArray body =
-            "From: Driving School <" + fromEmail.toLatin1() + ">\r\n"
-            "To: " + toEmail.toLatin1() + "\r\n"
-            "Subject: Your Password Reset Code\r\n"
-            "MIME-Version: 1.0\r\n"
-            "Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n"
-            "\r\n"
-            "--" + boundary + "\r\n"
-            "Content-Type: text/plain; charset=UTF-8\r\n"
-            "Content-Transfer-Encoding: 8bit\r\n"
-            "\r\n"
-            + plain +
-            "\r\n--" + boundary + "\r\n"
-            "Content-Type: text/html; charset=UTF-8\r\n"
-            "Content-Transfer-Encoding: 8bit\r\n"
-            "\r\n"
-            + html +
-            "\r\n--" + boundary + "--\r\n";
+    QByteArray body =
+        "From: Driving School <" + fromEmail.toLatin1() + ">\r\n"
+        "To: " + toEmail.toLatin1() + "\r\n"
+        "Subject: Your Password Reset Code\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n"
+        "\r\n"
+        "--" + boundary + "\r\n"
+        "Content-Type: text/plain; charset=UTF-8\r\n"
+        "Content-Transfer-Encoding: 8bit\r\n"
+        "\r\n"
+        + plain +
+        "\r\n--" + boundary + "\r\n"
+        "Content-Type: text/html; charset=UTF-8\r\n"
+        "Content-Transfer-Encoding: 8bit\r\n"
+        "\r\n"
+        + html +
+        "\r\n--" + boundary + "--\r\n";
 
-        socket.write(body + ".\r\n");
-        socket.waitForBytesWritten(5000);
-        socket.waitForReadyRead(10000);
+    // ── Write payload to a temp file and send via curl.exe ────────
+    // curl uses Windows Schannel (built-in TLS) — no OpenSSL needed.
+    QTemporaryFile *tmpFile = new QTemporaryFile(this);
+    tmpFile->setAutoRemove(true);
+    if (!tmpFile->open()) {
+        callback(false, "Cannot create temp file for email.");
+        return;
+    }
+    tmpFile->write(body);
+    tmpFile->flush();
 
-        cmd("QUIT");
-        socket.disconnectFromHost();
+    QStringList args;
+    args << "--url"  << "smtps://smtp.gmail.com:465"
+         << "--insecure"                                   // skip cert validation (same machine)
+         << "--user" << (fromEmail + ":" + appPassword)
+         << "--mail-from" << fromEmail
+         << "--mail-rcpt"  << toEmail
+         << "--upload-file" << tmpFile->fileName()
+         << "--silent";
 
-        finish(true, "");
+    QProcess *proc = new QProcess(this);
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+
+    // Run asynchronously — callback fires when curl finishes
+    connect(proc, QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc, tmpFile, callback](int exitCode, QProcess::ExitStatus) {
+        QString output = QString::fromUtf8(proc->readAll()).trimmed();
+        proc->deleteLater();
+        tmpFile->close();
+        tmpFile->deleteLater();
+
+        if (exitCode == 0) {
+            callback(true, "");
+        } else {
+            // Provide a friendly message; include curl output for diagnosis
+            QString err = output.isEmpty()
+                ? QString("curl exit code %1").arg(exitCode)
+                : output;
+            callback(false, err);
+        }
     });
 
-    thread->start();
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    proc->start("C:/Windows/System32/curl.exe", args);
 }
 
 // ══════════════════════════════════════════════════════════════

@@ -781,7 +781,11 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
 
 void StudentDashboard::onLogoutClicked()
 {
+    qApp->setStyleSheet("");
+
     MainWindow *loginWindow = new MainWindow();
+    loginWindow->show();
     loginWindow->showMaximized();
-    this->close();
+    this->hide();
+    this->deleteLater();
 }

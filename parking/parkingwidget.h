@@ -2,6 +2,7 @@
 #define PARKINGWIDGET_H
 
 #include <QWidget>
+#include "../wino/thememanager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -104,9 +105,11 @@ private slots:
     void onSensorEvent(const QString &event);
     void onDelayedAction();
     void onVehicleSelected(int vehiculeId);
+    void applyTheme();    // connected to ThemeManager::themeChanged
 
 private:
     void setupUI();
+    void autoSelectVehicle();   // skip vehicle-selection page; use circuit car
     QWidget* createBanner();
     QWidget* createVehicleSelectionPage();
     QWidget* createHomePage();
@@ -245,6 +248,26 @@ private:
     QLabel *m_depenseLabel;
     QVBoxLayout *m_reservationsLayout;
     QFrame *m_newBookingForm;
+
+    // ── Oracle Exam Booking Gate ──
+    bool        m_hasExamBookingToday; // true only if EXAM_REGISTRATIONS/EXAM_SESSIONS has today
+    QPushButton *m_fullExamStartBtn;   // "Start Full Exam" button (lock/unlock)
+    QLabel      *m_fullExamLockLabel;  // Shown when exam is locked
+    void checkOracleExamBooking();     // Queries Oracle for today's parking exam booking
+    void updateFullExamCard();         // Locks/unlocks the Full Exam card based on booking
+
+    // ── Incremental Score Sync ──
+    // Computes a step-by-step parking score from per-maneuver mastery and syncs to Oracle.
+    // Formula: score = sum(mastery_i * coverage_i) / 5 * 100
+    //   mastery_i  = successes / attempts  (0–1)
+    //   coverage_i = min(attempts, 5) / 5  (reaches 1.0 after 5 sessions per maneuver)
+    void computeAndSyncParkingScore();
+
+    // ── Trend Widget Refresh ──
+    // Reloads the last 20 sessions from DB and updates the histogram.
+    void refreshTrendWidget();
+
+    // ── Theme ── (declared as private slot above)
 
     // ── Session state ──
     QTimer *m_sessionTimer;

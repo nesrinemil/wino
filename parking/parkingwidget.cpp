@@ -1312,6 +1312,7 @@ ParkingWidget::ParkingWidget(const QString &userName, const QString &userRole,
       m_selectedTarif(15.0), m_totalDepense(0.0), m_examReady(false),
       m_examReadyLabel(nullptr), m_reservationBtn(nullptr),
       m_depenseLabel(nullptr), m_reservationsLayout(nullptr),
+      m_hasExamBookingToday(false), m_fullExamStartBtn(nullptr), m_fullExamLockLabel(nullptr),
       m_lastDistFront(-1), m_lastDistLeft(-1), m_lastDistRight(-1),
       m_lastDistRearL(-1), m_lastDistRearR(-1),
       m_voiceEnabled(true), m_voiceToggle(nullptr),
@@ -1375,9 +1376,17 @@ ParkingWidget::ParkingWidget(const QString &userName, const QString &userRole,
     initCommonMistakes();
     initVideoTutorials();
     setupUI();
+    // Gate the Full Exam on today's Oracle booking — runs after m_currentEleveId is set
+    checkOracleExamBooking();
+    updateFullExamCard();
     loadStatsFromDB();
     loadHistoryFromDB();
     updateDashboard();
+
+    // Apply saved theme on first show, and subscribe to future changes
+    applyTheme();
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &ParkingWidget::applyTheme);
 }
 
 ParkingWidget::~ParkingWidget()
@@ -1399,6 +1408,63 @@ void ParkingWidget::resizeEvent(QResizeEvent *event)
 //  LOAD STATS FROM DATABASE (Persistence)
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+//  INCREMENTAL PARKING SCORE  (Oracle WINO_PROGRESS sync)
+//
+//  Called after every individual session so the score shown in the
+//  "Sessions" tab progresses step-by-step with practice.
+//
+//  Formula (per maneuver i, for 5 standard maneuvers):
+//    mastery_i  = successes_i / attempts_i           (0–1, 0 if unpracticed)
+//    coverage_i = min(attempts_i, 5) / 5.0           (reaches 1.0 after ≥5 sessions)
+//    contribution_i = mastery_i * coverage_i
+//
+//  parking_score = sum(contribution_i) / 5.0 * 100   (0–100)
+//
+//  Effect:
+//    - Every new successful session pushes the score UP
+//    - Errors (failure) pull the success-rate DOWN → score falls
+//    - Score grows faster when all 5 maneuvers are practiced
+//    - Reaches 100 only if every maneuver has ≥5 sessions with 100% success
+// ═══════════════════════════════════════════════════════════════════
+
+void ParkingWidget::computeAndSyncParkingScore()
+{
+    if (m_currentEleveId <= 0) return;
+
+    const int NUM_MANEUVERS = 5; // standard: creneau, bataille, epi, marche_arriere, demi_tour
+    double totalContribution = 0.0;
+
+    for (int i = 0; i < NUM_MANEUVERS && i < m_maneuverAttemptCounts.size(); i++) {
+        int attempts  = m_maneuverAttemptCounts[i];
+        int successes = m_maneuverSuccessCounts[i];
+        if (attempts > 0) {
+            double mastery       = (double)successes / attempts;         // 0.0 – 1.0
+            double coverageFactor = qMin(1.0, attempts / 5.0);          // 0.2 → 1.0
+            totalContribution   += mastery * coverageFactor;
+        }
+        // unpracticed maneuver → contributes 0 (no penalty, just no credit yet)
+    }
+
+    // Normalize: max possible = 5 (one full contribution per maneuver)
+    double parkingScore = (totalContribution / (double)NUM_MANEUVERS) * 100.0;
+    parkingScore = qMax(0.0, qMin(100.0, parkingScore));
+
+    QSqlQuery upd(QSqlDatabase::database());
+    upd.prepare(
+        "UPDATE WINO_PROGRESS SET parking_score = :score "
+        "WHERE user_id = :sid");
+    upd.bindValue(":score", parkingScore);
+    upd.bindValue(":sid",   m_currentEleveId);
+    if (!upd.exec())
+        qWarning() << "[Parking] computeAndSyncParkingScore failed:"
+                   << upd.lastError().text();
+    else
+        qDebug() << "[Parking] parking_score updated to" << parkingScore
+                 << "(attempts:" << m_maneuverAttemptCounts.mid(0,5)
+                 << " successes:" << m_maneuverSuccessCounts.mid(0,5) << ")";
+}
+
 void ParkingWidget::loadStatsFromDB()
 {
     auto &db = ParkingDBManager::instance();
@@ -1412,66 +1478,177 @@ void ParkingWidget::loadStatsFromDB()
         if(bt > 0 && bt < m_bestTimeSeconds) m_bestTimeSeconds = bt;
     }
 
-    // Load per-maneuver stats — UNION both new PARKING_SESSIONS and legacy SESSIONS
-    for(int i = 0; i < 5; i++){
-        QSqlQuery q(QSqlDatabase::database());
-        // Attempts: count from both tables
-        q.prepare("SELECT COUNT(*) FROM ("
-                  "SELECT session_id FROM PARKING_SESSIONS WHERE student_id=:id1 AND maneuver_type=:type1 "
-                  "UNION ALL "
-                  "SELECT ID FROM SESSIONS WHERE ELEVE_ID=:id2 AND MANOEUVRE_TYPE=:type2"
-                  ")");
-        q.bindValue(":id1", m_currentEleveId); q.bindValue(":type1", m_maneuverDbKeys[i]);
-        q.bindValue(":id2", m_currentEleveId); q.bindValue(":type2", m_maneuverDbKeys[i]);
-        if(q.exec() && q.next()) m_maneuverAttemptCounts[i] = q.value(0).toInt();
-
-        // Successes: count from both tables
-        q.prepare("SELECT COUNT(*) FROM ("
-                  "SELECT session_id FROM PARKING_SESSIONS WHERE student_id=:id1 AND maneuver_type=:type1 AND is_successful=1 "
-                  "UNION ALL "
-                  "SELECT ID FROM SESSIONS WHERE ELEVE_ID=:id2 AND MANOEUVRE_TYPE=:type2 AND REUSSI=1"
-                  ")");
-        q.bindValue(":id1", m_currentEleveId); q.bindValue(":type1", m_maneuverDbKeys[i]);
-        q.bindValue(":id2", m_currentEleveId); q.bindValue(":type2", m_maneuverDbKeys[i]);
-        if(q.exec() && q.next()) m_maneuverSuccessCounts[i] = q.value(0).toInt();
+    // ── Per-maneuver attempts & successes ────────────────────────────────────
+    // FIX: PARKING_SESSIONS is a SQLite table managed by ParkingDBManager.
+    // Querying it via QSqlDatabase::database() (Oracle) always returns 0.
+    // Solution: load all sessions through ParkingDBManager (correct SQLite connection)
+    // and compute per-maneuver stats in memory.
+    // ─────────────────────────────────────────────────────────────────────────
+    for(int i = 0; i < m_maneuverAttemptCounts.size(); i++){
+        m_maneuverAttemptCounts[i] = 0;
+        m_maneuverSuccessCounts[i] = 0;
     }
 
-    // Estimate XP and level
+    // Load ALL sessions (limit=500 to cover any realistic history)
+    auto allSessions = ParkingDBManager::instance().getSessionsEleve(m_currentEleveId, 500);
+
+    QSet<QDate> practiceDays;
+    for(const auto &s : allSessions){
+        QString manType = s["manoeuvre_type"].toString();
+        bool    ok      = s["reussi"].toBool();
+        int     idx     = m_maneuverDbKeys.indexOf(manType);
+        if(idx >= 0 && idx < m_maneuverAttemptCounts.size()){
+            m_maneuverAttemptCounts[idx]++;
+            if(ok) m_maneuverSuccessCounts[idx]++;
+        }
+        // Collect unique practice days for streak calculation
+        QString dateStr = s["date_debut"].toString().left(10);
+        QDate d = QDate::fromString(dateStr, "yyyy-MM-dd");
+        if(d.isValid()) practiceDays.insert(d);
+    }
+
+    // ── Estimate XP and level ─────────────────────────────────────────────
     m_totalXP = m_totalSuccessCount * 25 + (m_totalSessionsCount - m_totalSuccessCount) * 10;
     m_currentLevel = 1 + m_totalXP / 100;
 
-    // Practice streak (count consecutive days with sessions)
+    // ── Practice streak (consecutive days up to today) ────────────────────
     m_practiceStreak = 0;
-    QSqlQuery sq(QSqlDatabase::database());
-
-    // Load total spent
-    m_totalDepense = db.getTotalDepense(m_currentEleveId);
-
-    // Check exam readiness
-    checkExamReadiness();
-
-    sq.prepare("SELECT * FROM (SELECT DISTINCT TRUNC(session_start) AS d FROM PARKING_SESSIONS WHERE student_id=? "
-               "ORDER BY d DESC) WHERE ROWNUM <= 30");
-    sq.addBindValue(m_currentEleveId);
-    if(sq.exec()){
-        QDate prev = QDate::currentDate().addDays(1);
-        while(sq.next()){
-            QDate d = QDate::fromString(sq.value(0).toString(), "yyyy-MM-dd");
-            if(!d.isValid()) continue;
-            if(prev.addDays(-1) == d || prev == d || prev.addDays(1) == d){
-                // Allow today or yesterday gap
-                if(d == QDate::currentDate() || d == QDate::currentDate().addDays(-1) || m_practiceStreak > 0){
-                    m_practiceStreak++;
-                    prev = d;
-                } else break;
-            } else break;
+    for(int d = 0; d < 30; d++){
+        if(practiceDays.contains(QDate::currentDate().addDays(-d))){
+            m_practiceStreak++;
+        } else {
+            break; // streak broken
         }
     }
+
+    // ── Total spent ───────────────────────────────────────────────────────
+    m_totalDepense = db.getTotalDepense(m_currentEleveId);
+
+    // ── Exam readiness check ──────────────────────────────────────────────
+    checkExamReadiness();
+
+    qDebug() << "[loadStatsFromDB] sessions:" << m_totalSessionsCount
+             << " successes:" << m_totalSuccessCount
+             << " attempts/maneuver:" << m_maneuverAttemptCounts.mid(0,5)
+             << " successes/maneuver:" << m_maneuverSuccessCounts.mid(0,5);
 }
 
 void ParkingWidget::loadHistoryFromDB()
 {
     refreshHistoryUI();
+    refreshTrendWidget();   // also redraw the histogram with fresh session data
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TREND WIDGET REFRESH
+//  Reloads the last 20 sessions from DB and repaints the histogram.
+//  Must be called after every session so the chart stays up-to-date.
+//  Score per session = calculateScore-equivalent on stored DB values.
+// ═══════════════════════════════════════════════════════════════════
+
+void ParkingWidget::refreshTrendWidget()
+{
+    if (!m_trendWidget) return;
+
+    auto sessions = ParkingDBManager::instance().getSessionsEleve(m_currentEleveId, 20);
+    QList<int>  scores;
+    QList<bool> successes;
+
+    // Sessions come in DESC order → reverse for chronological left-to-right display
+    for (int i = sessions.size() - 1; i >= 0; i--) {
+        const auto &s = sessions[i];
+        bool ok  = s["reussi"].toBool();
+        int  err = s["nb_erreurs"].toInt();
+        int  cal = s["nb_calages"].toInt();
+        bool obs = s.contains("contact_obstacle") && s["contact_obstacle"].toBool();
+
+        int sc = 100;
+        if (!ok)  sc -= 30;
+        sc -= err * 10;
+        sc -= cal * 15;
+        if (obs)  sc -= 40;
+        sc = qMax(0, qMin(100, sc));
+
+        scores.append(sc);
+        successes.append(ok);
+    }
+
+    m_trendWidget->setData(scores, successes);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  THEME SUPPORT
+//  Iterates every child widget and normalizes hardcoded colors to
+//  match the current ThemeManager theme.
+//
+//  Strategy — "normalize then apply":
+//    1. Reset any dark-mode colors back to light originals
+//    2. If dark mode requested, replace light colors with dark equivalents
+//  This makes multiple toggles (light→dark→light→...) safe.
+// ═══════════════════════════════════════════════════════════════════
+
+void ParkingWidget::applyTheme()
+{
+    bool isDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+
+    // Color mappings: { lightOriginal, darkReplacement }
+    // Ordered carefully — more specific strings first to avoid double-substitution.
+    struct Pair { const char *light; const char *dark; };
+    static const Pair map[] = {
+        // Backgrounds
+        { "background:#f0f2f5",     "background:#0F172A"  },
+        { "background: #f0f2f5",    "background: #0F172A" },
+        { "background:#f8f8f8",     "background:#1a2332"  },
+        { "background:white",       "background:#1E293B"  },
+        { "background: white",      "background: #1E293B" },
+        { "background:#ffffff",     "background:#1E293B"  },
+        { "background:#FFFFFF",     "background:#1E293B"  },
+        { "background:#e8f8f5",     "background:#134E4A"  },  // teal tint
+        { "background:#fef3e2",     "background:#1c1a10"  },  // warn tint
+        // Borders / dividers
+        { "border:1px solid #e2e8f0",  "border:1px solid #334155" },
+        { "border: 1px solid #e2e8f0", "border: 1px solid #334155"},
+        { "#e2e8f0",                "#334155"  },
+        { "#dfe6e9",                "#253548"  },
+        // Text colors
+        { "color:#2d3436",          "color:#e2e8f0"  },
+        { "color: #2d3436",         "color: #e2e8f0" },
+        { "color:#636e72",          "color:#94a3b8"  },
+        { "color: #636e72",         "color: #94a3b8" },
+        { "color:#b2bec3",          "color:#64748b"  },
+        { "color:#74b9ff",          "color:#38BDF8"  },
+    };
+
+    for (QWidget *w : findChildren<QWidget*>()) {
+        QString ss = w->styleSheet();
+        if (ss.isEmpty()) continue;
+
+        // Step 1 – normalize: dark → light (idempotent for already-light widgets)
+        for (const auto &p : map)
+            ss.replace(QString(p.dark),  QString(p.light), Qt::CaseInsensitive);
+
+        // Step 2 – apply dark if requested
+        if (isDark)
+            for (const auto &p : map)
+                ss.replace(QString(p.light), QString(p.dark), Qt::CaseInsensitive);
+
+        if (ss != w->styleSheet())
+            w->setStyleSheet(ss);
+    }
+
+    // Also update QScrollArea / QScrollBar (set via static const SCROLL_SS)
+    for (QScrollArea *sa : findChildren<QScrollArea*>()) {
+        QString ss = sa->styleSheet();
+        if (ss.isEmpty()) continue;
+        ss.replace("#f0f2f5", isDark ? "#0F172A" : "#f0f2f5", Qt::CaseInsensitive);
+        sa->setStyleSheet(ss);
+    }
+
+    // Widget-level background
+    setStyleSheet(isDark ? "background:#0F172A;" : "background:#f0f2f5;");
+
+    // Force repaint
+    update();
 }
 
 void ParkingWidget::refreshHistoryUI()
@@ -1571,17 +1748,17 @@ void ParkingWidget::setupUI()
     mainL->addWidget(createBanner());
 
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(createVehicleSelectionPage()); // 0 — Vehicle selection
+    m_stack->addWidget(createVehicleSelectionPage()); // 0 — Vehicle selection (kept for fallback)
     m_stack->addWidget(createHomePage());              // 1 — Maneuver picker
     m_stack->addWidget(createSessionPage());           // 2 — Active session
     m_stack->addWidget(createReservationPage());       // 3 — Booking examen
     m_stack->addWidget(createAnalyticsPage());         // 4 — Analytics & Smart Coach
     m_stack->addWidget(createAssistantPage());         // 5 — AI Assistant
-    m_stack->setCurrentIndex(0);
     mainL->addWidget(m_stack, 1);
 
-    // Initial positioning of vehicle-page stats FAB (before first resizeEvent)
+    // Auto-select the student's circuit vehicle and go directly to maneuver picker
     QTimer::singleShot(0, this, [this](){
+        autoSelectVehicle();
         repositionNotesBubble();
     });
 }
@@ -2017,14 +2194,7 @@ QWidget* ParkingWidget::createHomePage()
     heroText->addWidget(subHi);
     heroL->addLayout(heroText, 1);
 
-    QPushButton *changeCarBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x84 Change Vehicle"), this);
-    changeCarBtn->setCursor(Qt::PointingHandCursor);
-    changeCarBtn->setFixedHeight(32);
-    changeCarBtn->setStyleSheet("QPushButton{background:#f0f2f5;color:#636e72;border:none;"
-        "border-radius:10px;padding:0 14px;font-size:10px;font-weight:bold;}"
-        "QPushButton:hover{background:#e2e8f0;}");
-    connect(changeCarBtn, &QPushButton::clicked, this, [this](){ m_stack->setCurrentIndex(0); });
-    heroL->addWidget(changeCarBtn);
+    // "Change Vehicle" button removed — vehicle is auto-assigned from circuit step
 
     QPushButton *coachBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\xa7\xa0 Coach & Stats"), this);
     coachBtn->setCursor(Qt::PointingHandCursor);
@@ -3600,9 +3770,12 @@ void ParkingWidget::showChecklistThenStart()
     QList<QCheckBox*> boxes;
     for(const auto &item : items){
         QCheckBox *cb = new QCheckBox(item, &dlg);
-        cb->setStyleSheet("QCheckBox{font-size:13px;color:#2d3436;spacing:10px;}"
-            "QCheckBox::indicator{width:20px;height:20px;border-radius:5px;border:2px solid #b2bec3;}"
-            "QCheckBox::indicator:checked{background:#00b894;border-color:#00b894;}");
+        cb->setStyleSheet(
+            "QCheckBox{font-size:13px;color:#2d3436;spacing:10px;background:transparent;}"
+            "QCheckBox::indicator{width:20px;height:20px;border-radius:5px;"
+            "  border:2px solid #b2bec3;background:#ffffff;}"
+            "QCheckBox::indicator:checked{background:#00b894;border-color:#00b894;}"
+            "QCheckBox::indicator:unchecked:hover{border-color:#00b894;background:#f0fdfa;}");
         boxes.append(cb);
         l->addWidget(cb);
     }
@@ -3782,6 +3955,11 @@ void ParkingWidget::endSession()
     // This guarantees that each student's dashboard reflects exactly what is in the DB,
     // regardless of which account is logged in.
     loadStatsFromDB();
+
+    // ── Sync incremental parking score to Oracle WINO_PROGRESS ──────────────
+    // m_maneuverAttemptCounts / m_maneuverSuccessCounts are freshly loaded above
+    // by loadStatsFromDB(), so computeAndSyncParkingScore() uses up-to-date values.
+    computeAndSyncParkingScore();
 
     // XP / level are gamification-only (not persisted in DB), keep in-memory
     if(success){
@@ -4126,20 +4304,38 @@ QWidget* ParkingWidget::createFullExamCard()
     seqRow->addStretch();
     l->addLayout(seqRow);
 
-    // Start button
+    // ── Lock label (visible when no Oracle exam booking for today) ──
+    m_fullExamLockLabel = new QLabel(card);
+    m_fullExamLockLabel->setWordWrap(true);
+    m_fullExamLockLabel->setAlignment(Qt::AlignCenter);
+    m_fullExamLockLabel->setText(
+        QString::fromUtf8("\xf0\x9f\x94\x92  Examen verrouill\xc3\xa9\n"
+                          "Vous devez r\xc3\xa9server votre examen via l'onglet Sessions,\n"
+                          "et l'acc\xc3\xa8s sera d\xc3\xa9verrouill\xc3\xa9 le jour exact de votre examen."));
+    m_fullExamLockLabel->setStyleSheet(
+        "QLabel{font-size:11px;color:rgba(255,255,255,0.9);"
+        "background:rgba(0,0,0,0.25);border-radius:12px;"
+        "padding:12px 16px;border:none;}");
+    l->addWidget(m_fullExamLockLabel);
+
+    // ── Start button (visible only when exam is booked for today) ──
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->addStretch();
-    QPushButton *startBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x9a\x80  Start Full Exam  \xe2\x86\x92"), card);
-    startBtn->setFixedHeight(42);
-    startBtn->setCursor(Qt::PointingHandCursor);
-    startBtn->setStyleSheet(
+    m_fullExamStartBtn = new QPushButton(
+        QString::fromUtf8("\xf0\x9f\x9a\x80  D\xc3\xa9marrer l'examen  \xe2\x86\x92"), card);
+    m_fullExamStartBtn->setFixedHeight(42);
+    m_fullExamStartBtn->setCursor(Qt::PointingHandCursor);
+    m_fullExamStartBtn->setStyleSheet(
         "QPushButton{background:white;color:#6c5ce7;border:none;"
         "border-radius:12px;font-size:13px;font-weight:bold;padding:0 28px;}"
         "QPushButton:hover{background:#f0f0ff;}");
-    connect(startBtn, &QPushButton::clicked, this, &ParkingWidget::openFullExam);
-    btnRow->addWidget(startBtn);
+    connect(m_fullExamStartBtn, &QPushButton::clicked, this, &ParkingWidget::openFullExam);
+    btnRow->addWidget(m_fullExamStartBtn);
     l->addLayout(btnRow);
+
+    // Initial state: locked (will be updated by updateFullExamCard() after construction)
+    m_fullExamStartBtn->setVisible(false);
+    m_fullExamLockLabel->setVisible(true);
 
     return card;
 }
@@ -4156,12 +4352,37 @@ void ParkingWidget::showFullExamResults()
     int combined = m_fullExamScores.isEmpty() ? 0 : totalScore / m_fullExamScores.size();
     bool overallPass = (passed == 4);
 
-    // Save combined result to DB
+    // Save combined result to local SQLite DB
     ParkingDBManager::instance().saveResultatExamen(
         m_currentEleveId, "full_exam",
         m_sessionSeconds, overallPass,
         combined * 20.0 / 100.0,
         m_nbErrors, overallPass ? "" : "At least one maneuver failed", "");
+
+    // ── Sync parking score to Oracle WINO_PROGRESS ──────────────────────────
+    if (m_currentEleveId > 0) {
+        {
+            QSqlQuery upd(QSqlDatabase::database());
+            upd.prepare(
+                "UPDATE WINO_PROGRESS SET parking_score = :score "
+                "WHERE user_id = :sid");
+            upd.bindValue(":score", (double)combined);
+            upd.bindValue(":sid",   m_currentEleveId);
+            if (!upd.exec())
+                qWarning() << "[ParkingExam] Failed to update parking_score:"
+                           << upd.lastError().text();
+        }
+        if (overallPass) {
+            QSqlQuery updSt(QSqlDatabase::database());
+            updSt.prepare(
+                "UPDATE WINO_PROGRESS SET parking_status = 'PASSED' "
+                "WHERE user_id = :sid");
+            updSt.bindValue(":sid", m_currentEleveId);
+            updSt.exec();
+        }
+        qDebug() << "[ParkingExam] Oracle parking_score updated to" << combined
+                 << "for user" << m_currentEleveId;
+    }
 
     QDialog dlg(this);
     dlg.setWindowTitle(QString::fromUtf8("Full Exam Results"));
@@ -4236,34 +4457,22 @@ void ParkingWidget::showFullExamResults()
 
     // Advice
     QLabel *advLbl = new QLabel(overallPass ?
-        QString::fromUtf8("\xf0\x9f\x8e\x89  Excellent! You are ready for the real ATTT exam. "
-            "Book your exam slot now.") :
-        QString::fromUtf8("\xf0\x9f\x92\xa1  Focus on the maneuvers you failed. "
-            "Practice each one individually, then retry the Full Exam."), &dlg);
+        QString::fromUtf8("\xf0\x9f\x8e\x89  F\xc3\xa9licitations ! R\xc3\xa9sultat enregistr\xc3\xa9 dans votre dossier. "
+            "Votre instructeur sera notifi\xc3\xa9 de votre score.") :
+        QString::fromUtf8("\xf0\x9f\x92\xa1  Continuez \xc3\xa0 pratiquer les man\xc5\x93uvres individuelles. "
+            "Pour repasser l'examen, r\xc3\xa9servez une nouvelle s\xc3\xa9ance via l'onglet Sessions."),
+        &dlg);
     advLbl->setWordWrap(true);
     advLbl->setStyleSheet("QLabel{font-size:11px;color:#636e72;background:#f0faf7;"
         "border-radius:10px;padding:10px 14px;}");
     l->addWidget(advLbl);
 
-    // Buttons
+    // Buttons — Home only (no retry: this is a real exam, not practice)
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->setSpacing(12);
 
-    QPushButton *retryBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x94\x84  Retry Full Exam"), &dlg);
-    retryBtn->setFixedHeight(44);
-    retryBtn->setCursor(Qt::PointingHandCursor);
-    retryBtn->setStyleSheet("QPushButton{background:#6c5ce7;color:white;border:none;"
-        "border-radius:12px;font-size:13px;font-weight:bold;padding:0 20px;}"
-        "QPushButton:hover{background:#5a4bd1;}");
-    connect(retryBtn, &QPushButton::clicked, &dlg, [this, &dlg](){
-        dlg.accept();
-        openFullExam();
-    });
-    btnRow->addWidget(retryBtn, 1);
-
     QPushButton *homeBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x8f\xa0  Home"), &dlg);
+        QString::fromUtf8("\xf0\x9f\x8f\xa0  Retour \xc3\xa0 l'accueil"), &dlg);
     homeBtn->setFixedHeight(44);
     homeBtn->setCursor(Qt::PointingHandCursor);
     homeBtn->setStyleSheet("QPushButton{background:#f0f2f5;color:#636e72;border:none;"
@@ -5284,7 +5493,16 @@ QWidget* ParkingWidget::createExamReadinessCard()
         "QPushButton:hover{background:#009874;}");
     m_reservationBtn->setVisible(false);
     connect(m_reservationBtn, &QPushButton::clicked, this, [this](){
-        m_stack->setCurrentIndex(3);
+        // Redirect student to the Sessions tab booking system (Oracle-based)
+        QMessageBox::information(this,
+            QString::fromUtf8("R\xc3\xa9server votre examen"),
+            QString::fromUtf8(
+                "\xf0\x9f\x93\x85  Pour r\xc3\xa9server votre examen de parking :\n\n"
+                "1\xef\xb8\x8f\xe2\x83\xa3  Allez dans l'onglet \xc2\xab Sessions \xc2\xbb du menu principal\n"
+                "2\xef\xb8\x8f\xe2\x83\xa3  Cliquez sur \xc2\xab Book Session \xc2\xbb\n"
+                "3\xef\xb8\x8f\xe2\x83\xa3  S\xc3\xa9lectionnez le type \xc2\xab Parking \xc2\xbb\n"
+                "4\xef\xb8\x8f\xe2\x83\xa3  Choisissez une date et cr\xc3\xa9neau d'examen\n\n"
+                "L'examen sera d\xc3\xa9verrouill\xc3\xa9 automatiquement le jour pr\xc3\xa9vu."));
     });
     l->addWidget(m_reservationBtn);
 
@@ -5320,14 +5538,75 @@ void ParkingWidget::checkExamReadiness()
     if(m_reservationBtn){
         m_reservationBtn->setVisible(m_examReady);
     }
+
+    // Re-check Oracle booking gate every time readiness is evaluated
+    checkOracleExamBooking();
+    updateFullExamCard();
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  RESERVATION PAGE
+//  ORACLE EXAM BOOKING GATE
+//  Checks Oracle for a parking exam session registered for TODAY.
+//  Uses EXAM_REGISTRATIONS + EXAM_SESSIONS (primary) and
+//  EXAM_REQUEST status=APPROVED (fallback).
+// ═══════════════════════════════════════════════════════════════════
+
+void ParkingWidget::checkOracleExamBooking()
+{
+    m_hasExamBookingToday = false;
+    if (m_currentEleveId <= 0) return;
+
+    // ── Primary: student registered to an EXAM_SESSION whose date is today ──
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(
+            "SELECT COUNT(*) FROM EXAM_REGISTRATIONS er "
+            "JOIN EXAM_SESSIONS es ON er.exam_session_id = es.id "
+            "WHERE er.student_id = :sid "
+            "  AND UPPER(es.exam_type) = 'PARKING' "
+            "  AND TRUNC(es.exam_date) = TRUNC(SYSDATE)");
+        q.bindValue(":sid", m_currentEleveId);
+        if (q.exec() && q.next() && q.value(0).toInt() > 0) {
+            m_hasExamBookingToday = true;
+            qDebug() << "[ParkingExam] Oracle EXAM_REGISTRATIONS booking found for today";
+            return;
+        }
+    }
+
+    // ── Fallback: instructor has APPROVED the exam request for step 3 ──
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(
+            "SELECT COUNT(*) FROM EXAM_REQUEST "
+            "WHERE student_id = :sid "
+            "  AND exam_step = 3 "
+            "  AND status = 'APPROVED'");
+        q.bindValue(":sid", m_currentEleveId);
+        if (q.exec() && q.next() && q.value(0).toInt() > 0) {
+            m_hasExamBookingToday = true;
+            qDebug() << "[ParkingExam] Oracle EXAM_REQUEST APPROVED found for step 3";
+        }
+    }
+}
+
+void ParkingWidget::updateFullExamCard()
+{
+    if (!m_fullExamStartBtn || !m_fullExamLockLabel) return;
+    m_fullExamStartBtn->setVisible(m_hasExamBookingToday);
+    m_fullExamLockLabel->setVisible(!m_hasExamBookingToday);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  RESERVATION PAGE  (replaced — Oracle exam status info only)
 // ═══════════════════════════════════════════════════════════════════
 
 QWidget* ParkingWidget::createReservationPage()
 {
+    // ═══════════════════════════════════════════════════════════════════════
+    //  PAGE 3 — Statut des réservations d'examen (Oracle uniquement)
+    //  La réservation se fait via l'onglet "Sessions" de l'application.
+    //  Ce panneau affiche uniquement le statut Oracle en lecture seule.
+    // ═══════════════════════════════════════════════════════════════════════
     QWidget *page = new QWidget(this);
     page->setObjectName("resvPage");
     page->setStyleSheet(QString("QWidget#resvPage{%1}").arg(BG));
@@ -5336,7 +5615,7 @@ QWidget* ParkingWidget::createReservationPage()
     pL->setContentsMargins(0,0,0,0);
     pL->setSpacing(0);
 
-    // Top bar
+    // ── Top bar ──────────────────────────────────────────────────────────
     QWidget *topBar = new QWidget(this);
     topBar->setObjectName("rTB");
     topBar->setStyleSheet("QWidget#rTB{background:white;border-bottom:1px solid #eaeaea;}");
@@ -5345,20 +5624,24 @@ QWidget* ParkingWidget::createReservationPage()
     tbL->setContentsMargins(20,0,20,0);
     tbL->setSpacing(14);
 
-    QPushButton *back = new QPushButton(QString::fromUtf8("\xe2\x86\x90  Accueil"), topBar);
+    QPushButton *back = new QPushButton(
+        QString::fromUtf8("\xe2\x86\x90  Accueil"), topBar);
     back->setCursor(Qt::PointingHandCursor);
-    back->setStyleSheet("QPushButton{background:#e8f8f5;color:#00b894;border:none;border-radius:12px;"
-        "padding:7px 16px;font-size:12px;font-weight:bold;}QPushButton:hover{background:#d1f2eb;}");
+    back->setStyleSheet(
+        "QPushButton{background:#e8f8f5;color:#00b894;border:none;border-radius:12px;"
+        "padding:7px 16px;font-size:12px;font-weight:bold;}"
+        "QPushButton:hover{background:#d1f2eb;}");
     connect(back, &QPushButton::clicked, this, [this](){ m_stack->setCurrentIndex(1); });
     tbL->addWidget(back);
 
-    QLabel *rTitle = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x93\x85  ATTT Exam Booking"), topBar);
-    rTitle->setStyleSheet("QLabel{font-size:15px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
+    QLabel *rTitle = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x85  Statut de mon examen Parking"), topBar);
+    rTitle->setStyleSheet(
+        "QLabel{font-size:15px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
     tbL->addWidget(rTitle, 1);
     pL->addWidget(topBar);
 
-    // Scroll area
+    // ── Scroll area ──────────────────────────────────────────────────────
     QScrollArea *scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -5369,167 +5652,39 @@ QWidget* ParkingWidget::createReservationPage()
     cL->setContentsMargins(32,24,32,24);
     cL->setSpacing(20);
 
-    // ── Status ──
-    QFrame *statusCard = new QFrame(this);
-    statusCard->setObjectName("rsC");
-    statusCard->setStyleSheet(cardSS("rsC"));
-    statusCard->setGraphicsEffect(shadow(statusCard));
-    QVBoxLayout *sl = new QVBoxLayout(statusCard);
-    sl->setContentsMargins(20,16,20,16);
-    sl->setSpacing(10);
+    // ── Info card: how to book ───────────────────────────────────────────
+    QFrame *infoCard = new QFrame(this);
+    infoCard->setObjectName("riC");
+    infoCard->setStyleSheet(
+        "QFrame#riC{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+        "stop:0 #e8f8f5,stop:1 #d1f2eb);border-radius:16px;border:none;}");
+    infoCard->setGraphicsEffect(shadow(infoCard));
+    QVBoxLayout *il = new QVBoxLayout(infoCard);
+    il->setContentsMargins(22,18,22,18);
+    il->setSpacing(10);
 
-    QLabel *statusTitle = new QLabel(QString::fromUtf8(
-        "\xe2\x9c\x85  You are eligible for the exam!"), this);
-    statusTitle->setStyleSheet("QLabel{font-size:18px;font-weight:bold;color:#00b894;background:transparent;border:none;}");
-    sl->addWidget(statusTitle);
+    QLabel *infoTitle = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x8b  Comment r\xc3\xa9server votre examen ?"), this);
+    infoTitle->setStyleSheet(
+        "QLabel{font-size:15px;font-weight:bold;color:#00b894;"
+        "background:transparent;border:none;}");
+    il->addWidget(infoTitle);
 
-    QLabel *statusDesc = new QLabel(QString::fromUtf8(
-        "Book your slot to take the exam de maneuvers at the ATTT course.\n"
-        "Choose a date and a available time slot."), this);
-    statusDesc->setStyleSheet("QLabel{font-size:12px;color:#636e72;background:transparent;border:none;line-height:1.5;}");
-    statusDesc->setWordWrap(true);
-    sl->addWidget(statusDesc);
-    cL->addWidget(statusCard);
+    QLabel *infoSteps = new QLabel(
+        QString::fromUtf8(
+            "1\xef\xb8\x8f\xe2\x83\xa3  Allez dans l'onglet \xc2\xab Sessions \xc2\xbb du menu principal\n"
+            "2\xef\xb8\x8f\xe2\x83\xa3  Cliquez sur \xc2\xab Book Session \xc2\xbb\n"
+            "3\xef\xb8\x8f\xe2\x83\xa3  S\xc3\xa9lectionnez le type \xc2\xab Parking Exam \xc2\xbb\n"
+            "4\xef\xb8\x8f\xe2\x83\xa3  Choisissez la date et le cr\xc3\xa9neau\n\n"
+            "\xf0\x9f\x94\x92  L'examen sera d\xc3\xa9verrouill\xc3\xa9 automatiquement le jour exact r\xc3\xa9serv\xc3\xa9."),
+        this);
+    infoSteps->setWordWrap(true);
+    infoSteps->setStyleSheet(
+        "QLabel{font-size:12px;color:#2d6a4f;background:transparent;border:none;line-height:1.6;}");
+    il->addWidget(infoSteps);
+    cL->addWidget(infoCard);
 
-    // ── New Reservation Form ──
-    m_newBookingForm = new QFrame(this);
-    m_newBookingForm->setObjectName("rfC");
-    m_newBookingForm->setStyleSheet(cardSS("rfC"));
-    m_newBookingForm->setGraphicsEffect(shadow(m_newBookingForm));
-    QVBoxLayout *fl = new QVBoxLayout(m_newBookingForm);
-    fl->setContentsMargins(20,16,20,16);
-    fl->setSpacing(14);
-
-    QLabel *formTitle = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x93\x9d  New booking"), this);
-    formTitle->setStyleSheet("QLabel{font-size:16px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
-    fl->addWidget(formTitle);
-
-    // Date selection
-    QHBoxLayout *dateRow = new QHBoxLayout();
-    dateRow->setSpacing(12);
-    QLabel *dateLbl = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x93\x85  Exam date:"), this);
-    dateLbl->setStyleSheet("QLabel{font-size:12px;color:#636e72;background:transparent;border:none;}");
-    dateRow->addWidget(dateLbl);
-
-    QComboBox *dateCombo = new QComboBox(this);
-    dateCombo->setStyleSheet("QComboBox{background:white;border:2px solid #d1f2eb;border-radius:10px;"
-        "padding:8px 14px;font-size:12px;color:#2d3436;min-width:180px;}"
-        "QComboBox:hover{border-color:#00b894;}"
-        "QComboBox::drop-down{border:none;padding-right:10px;}"
-        "QComboBox QAbstractItemView{background:white;color:#2d3436;selection-background-color:#00b894;selection-color:white;outline:none;}");
-    // Generate next 14 days (weekdays only)
-    QDate today = QDate::currentDate();
-    for(int d = 1; d <= 21; d++){
-        QDate dt = today.addDays(d);
-        int dow = dt.dayOfWeek();
-        if(dow >= 1 && dow <= 6){ // Lundi-Samedi
-            dateCombo->addItem(dt.toString("dddd dd/MM/yyyy"), dt.toString("yyyy-MM-dd"));
-        }
-    }
-    dateRow->addWidget(dateCombo, 1);
-    fl->addLayout(dateRow);
-
-    // Creneau selection
-    QHBoxLayout *creneauRow = new QHBoxLayout();
-    creneauRow->setSpacing(12);
-    QLabel *crLbl = new QLabel(QString::fromUtf8(
-        "\xe2\x8f\xb0  Parallel :"), this);
-    crLbl->setStyleSheet("QLabel{font-size:12px;color:#636e72;background:transparent;border:none;}");
-    creneauRow->addWidget(crLbl);
-
-    QComboBox *creneauCombo = new QComboBox(this);
-    creneauCombo->setStyleSheet("QComboBox{background:white;border:2px solid #d1f2eb;border-radius:10px;"
-        "padding:8px 14px;font-size:12px;color:#2d3436;min-width:180px;}"
-        "QComboBox:hover{border-color:#00b894;}"
-        "QComboBox::drop-down{border:none;padding-right:10px;}"
-        "QComboBox QAbstractItemView{background:white;color:#2d3436;selection-background-color:#00b894;selection-color:white;outline:none;}");
-    creneauCombo->addItem(QString::fromUtf8("08:00 - 09:00 (Matin)"), "08:00-09:00");
-    creneauCombo->addItem(QString::fromUtf8("09:00 - 10:00 (Matin)"), "09:00-10:00");
-    creneauCombo->addItem(QString::fromUtf8("10:00 - 11:00 (Matin)"), "10:00-11:00");
-    creneauCombo->addItem(QString::fromUtf8("11:00 - 12:00 (Matin)"), "11:00-12:00");
-    creneauCombo->addItem(QString::fromUtf8("14:00 - 15:00 (Afternoon)"), "14:00-15:00");
-    creneauCombo->addItem(QString::fromUtf8("15:00 - 16:00 (Afternoon)"), "15:00-16:00");
-    creneauCombo->addItem(QString::fromUtf8("16:00 - 17:00 (Afternoon)"), "16:00-17:00");
-    creneauRow->addWidget(creneauCombo, 1);
-    fl->addLayout(creneauRow);
-
-    // Instructor selection
-    QHBoxLayout *instRow = new QHBoxLayout();
-    instRow->setSpacing(12);
-    QLabel *instLbl = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x91\xa8\xe2\x80\x8d\xe2\x9a\xaa  Instructor :"), this);
-    instLbl->setStyleSheet("QLabel{font-size:12px;color:#636e72;background:transparent;border:none;}");
-    instRow->addWidget(instLbl);
-
-    QComboBox *instCombo = new QComboBox(this);
-    instCombo->setStyleSheet("QComboBox{background:white;border:2px solid #d1f2eb;border-radius:10px;"
-        "padding:8px 14px;font-size:12px;color:#2d3436;min-width:180px;}"
-        "QComboBox:hover{border-color:#00b894;}"
-        "QComboBox::drop-down{border:none;padding-right:10px;}"
-        "QComboBox QAbstractItemView{background:white;color:#2d3436;selection-background-color:#00b894;selection-color:white;outline:none;}");
-    
-    QList<QVariantMap> instructors = ParkingDBManager::instance().getAllMoniteurs();
-    for (const auto &inst : instructors) {
-        instCombo->addItem(QString("%1 %2").arg(inst["prenom"].toString(), inst["nom"].toString()), inst["id"]);
-    }
-    instRow->addWidget(instCombo, 1);
-    fl->addLayout(instRow);
-
-    // Price info
-    QLabel *priceLbl = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x92\xb0  Exam fee : 50.0 DT  \xc2\xb7  "
-        "Total spent on training: %1 DT")
-        .arg(m_totalDepense, 0, 'f', 1), this);
-    priceLbl->setWordWrap(true);
-    priceLbl->setStyleSheet("QLabel{font-size:12px;font-weight:bold;color:#e17055;"
-        "background:#fef3e2;border-radius:10px;padding:10px 14px;border:none;}");
-    fl->addWidget(priceLbl);
-
-    // Submit button
-    QPushButton *submitBtn = new QPushButton(QString::fromUtf8(
-        "\xe2\x9c\x85  Confirm booking"), this);
-    submitBtn->setFixedHeight(48);
-    submitBtn->setCursor(Qt::PointingHandCursor);
-    submitBtn->setStyleSheet("QPushButton{background:#00b894;color:white;border:none;border-radius:12px;"
-        "font-size:14px;font-weight:bold;}"
-        "QPushButton:hover{background:#009874;}");
-    connect(submitBtn, &QPushButton::clicked, this,
-        [this, dateCombo, creneauCombo, instCombo](){
-            QString dateStr = dateCombo->currentData().toString();
-            QString creneau = creneauCombo->currentData().toString();
-            int instId = instCombo->currentData().toInt();
-            if(dateStr.isEmpty()){
-                QMessageBox::warning(this, "", QString::fromUtf8("Please select a date."));
-                return;
-            }
-            if(instId <= 0){
-                QMessageBox::warning(this, "", QString::fromUtf8("Please select an instructor."));
-                return;
-            }
-            int resId = ParkingDBManager::instance().addReservationExamen(
-                m_currentEleveId, instId, m_currentVehiculeId, dateStr, creneau, 50.0);
-            if(resId > 0){
-                QMessageBox::information(this, QString::fromUtf8("Booking confirmed"),
-                    QString::fromUtf8("\xe2\x9c\x85 Your exam is booked!\n\n"
-                        "\xf0\x9f\x93\x85 Date : %1\n"
-                        "\xe2\x8f\xb0 Parallel : %2\n"
-                        "\xf0\x9f\x92\xb0 Montant : 50 DT\n\n"
-                        "Arrive 15 min before your time.\n"
-                        "Bonne chance \xf0\x9f\x8d\x80 !")
-                    .arg(dateCombo->currentText(), creneauCombo->currentText()));
-                // Refresh reservations list
-                showReservationDialog();
-            } else {
-                QMessageBox::warning(this, "", QString::fromUtf8("Error during booking."));
-            }
-        });
-    fl->addWidget(submitBtn);
-
-    cL->addWidget(m_newBookingForm);
-
-    // ── Existing Reservations ──
+    // ── Oracle registrations list ────────────────────────────────────────
     QFrame *listCard = new QFrame(this);
     listCard->setObjectName("rlC");
     listCard->setStyleSheet(cardSS("rlC"));
@@ -5538,9 +5693,10 @@ QWidget* ParkingWidget::createReservationPage()
     ll->setContentsMargins(20,16,20,16);
     ll->setSpacing(10);
 
-    QLabel *listTitle = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x93\x9c  My bookings"), this);
-    listTitle->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
+    QLabel *listTitle = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x9c  Mes inscriptions d'examen (Oracle)"), this);
+    listTitle->setStyleSheet(
+        "QLabel{font-size:14px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
     ll->addWidget(listTitle);
 
     m_reservationsLayout = new QVBoxLayout();
@@ -5548,7 +5704,7 @@ QWidget* ParkingWidget::createReservationPage()
     ll->addLayout(m_reservationsLayout);
     cL->addWidget(listCard);
 
-    // Load existing reservations
+    // Populate from Oracle immediately
     showReservationDialog();
 
     cL->addStretch();
@@ -5561,122 +5717,222 @@ void ParkingWidget::showReservationDialog()
 {
     if(!m_reservationsLayout) return;
 
-    // Clear existing
+    // Clear existing widgets
     QLayoutItem *item;
     while((item = m_reservationsLayout->takeAt(0)) != nullptr){
         if(item->widget()) delete item->widget();
         delete item;
     }
 
-    auto reservations = ParkingDBManager::instance().getReservationsEleve(m_currentEleveId);
-    
-    // Check for active bookings to restrict new ones
-    bool hasActiveBooking = false;
-    for(const auto &r : reservations){
-        QString statut = r["statut"].toString();
-        if(statut == "APPROVED" || statut == "confirmee" || statut == "PENDING" || statut == "en_attente") {
-            hasActiveBooking = true;
-            break;
+    // ── Query Oracle: EXAM_REGISTRATIONS + EXAM_SESSIONS ─────────────────
+    struct OracleExam {
+        QString date, location, examType, status;
+        bool isToday;
+    };
+    QList<OracleExam> oracleExams;
+
+    if (m_currentEleveId > 0) {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(
+            "SELECT TO_CHAR(es.exam_date,'DD/MM/YYYY') AS exam_date, "
+            "       es.location, es.exam_type, er.status, "
+            "       CASE WHEN TRUNC(es.exam_date)=TRUNC(SYSDATE) THEN 1 ELSE 0 END AS is_today "
+            "FROM   EXAM_REGISTRATIONS er "
+            "JOIN   EXAM_SESSIONS es ON er.exam_session_id = es.id "
+            "WHERE  er.student_id = :sid "
+            "  AND  UPPER(es.exam_type) = 'PARKING' "
+            "ORDER  BY es.exam_date DESC");
+        q.bindValue(":sid", m_currentEleveId);
+        if (q.exec()) {
+            while (q.next()) {
+                OracleExam e;
+                e.date     = q.value("exam_date").toString();
+                e.location = q.value("location").toString();
+                e.examType = q.value("exam_type").toString();
+                e.status   = q.value("status").toString();
+                e.isToday  = (q.value("is_today").toInt() == 1);
+                oracleExams.append(e);
+            }
+        }
+        // Also check EXAM_REQUEST (step=3) for any APPROVED/PENDING requests
+        QSqlQuery q2(QSqlDatabase::database());
+        q2.prepare(
+            "SELECT TO_CHAR(requested_date,'DD/MM/YYYY') AS req_date, "
+            "       status, comments "
+            "FROM   EXAM_REQUEST "
+            "WHERE  student_id = :sid AND exam_step = 3 "
+            "ORDER  BY requested_date DESC "
+            "FETCH  FIRST 5 ROWS ONLY");
+        q2.bindValue(":sid", m_currentEleveId);
+        if (q2.exec()) {
+            while (q2.next()) {
+                QString stat  = q2.value("status").toString();
+                QString date  = q2.value("req_date").toString();
+                QString cmts  = q2.value("comments").toString();
+                QString stColor =
+                    (stat == "APPROVED")  ? "#00b894" :
+                    (stat == "PENDING")   ? "#fdcb6e" :
+                    (stat == "REJECTED")  ? "#e17055" : "#636e72";
+                QString stIcon =
+                    (stat == "APPROVED")  ? QString::fromUtf8("\xe2\x9c\x85") :
+                    (stat == "PENDING")   ? QString::fromUtf8("\xe2\x8f\xb3") :
+                    (stat == "REJECTED")  ? QString::fromUtf8("\xe2\x9d\x8c")
+                                          : QString::fromUtf8("\xf0\x9f\x93\x84");
+
+                QWidget *row = new QWidget(this);
+                row->setStyleSheet(
+                    QString("background:%1;border-radius:10px;")
+                        .arg(stColor + "18"));
+                QHBoxLayout *rl = new QHBoxLayout(row);
+                rl->setContentsMargins(12,8,12,8);
+                rl->setSpacing(10);
+
+                QLabel *ico = new QLabel(stIcon, row);
+                ico->setFixedSize(24,24);
+                ico->setAlignment(Qt::AlignCenter);
+                ico->setStyleSheet("QLabel{font-size:14px;background:transparent;border:none;}");
+                rl->addWidget(ico);
+
+                QVBoxLayout *dc = new QVBoxLayout();
+                dc->setSpacing(2);
+                QLabel *dl = new QLabel(
+                    QString::fromUtf8("Demande d'examen Parking \xe2\x80\x94 soumise le %1").arg(date),
+                    row);
+                dl->setStyleSheet(
+                    "QLabel{font-size:11px;font-weight:bold;color:#2d3436;"
+                    "background:transparent;border:none;}");
+                dc->addWidget(dl);
+                if (!cmts.isEmpty()) {
+                    QLabel *cl = new QLabel(cmts, row);
+                    cl->setStyleSheet(
+                        "QLabel{font-size:10px;color:#636e72;background:transparent;border:none;}");
+                    dc->addWidget(cl);
+                }
+                rl->addLayout(dc, 1);
+
+                QLabel *badge = new QLabel(stat, row);
+                badge->setStyleSheet(
+                    QString("QLabel{font-size:9px;font-weight:bold;color:%1;"
+                            "background:%2;border-radius:8px;padding:4px 10px;border:none;}")
+                        .arg(stColor, stColor + "30"));
+                rl->addWidget(badge);
+
+                m_reservationsLayout->addWidget(row);
+                QFrame *sep = new QFrame(this);
+                sep->setFrameShape(QFrame::HLine);
+                sep->setStyleSheet("QFrame{background:rgba(0,0,0,0.04);max-height:1px;border:none;}");
+                m_reservationsLayout->addWidget(sep);
+            }
         }
     }
-    
-    if (m_newBookingForm) {
-        m_newBookingForm->setVisible(!hasActiveBooking);
-    }
 
-    if(reservations.isEmpty()){
-        QLabel *empty = new QLabel(QString::fromUtf8(
-            "\xf0\x9f\x93\xad  No reservations.\nBook your first exam slot !"), this);
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setStyleSheet("QLabel{font-size:11px;color:#b2bec3;background:#f8f8f8;"
-            "border-radius:10px;padding:16px;border:none;}");
-        m_reservationsLayout->addWidget(empty);
-        return;
-    }
+    // ── Oracle EXAM_REGISTRATIONS entries ─────────────────────────────────
+    for (const auto &e : oracleExams) {
+        QString stColor =
+            e.isToday   ? "#6c5ce7" :
+            (e.status == "REGISTERED" || e.status == "CONFIRMED") ? "#00b894" :
+            (e.status == "CANCELLED") ? "#e17055" : "#636e72";
+        QString stText =
+            e.isToday   ? QString::fromUtf8("\xf0\x9f\x94\x93 Aujourd'hui !") :
+            (e.status == "REGISTERED" || e.status == "CONFIRMED")
+                        ? QString::fromUtf8("Inscrit") :
+            (e.status == "CANCELLED") ? QString::fromUtf8("Annul\xc3\xa9") : e.status;
 
-    for(const auto &r : reservations){
         QWidget *row = new QWidget(this);
-        row->setStyleSheet("background:transparent;");
+        row->setStyleSheet(
+            QString("background:%1;border-radius:10px;")
+                .arg(e.isToday ? "#f0eeff" : (stColor + "18")));
         QHBoxLayout *rl = new QHBoxLayout(row);
-        rl->setContentsMargins(10,8,10,8);
+        rl->setContentsMargins(12,10,12,10);
         rl->setSpacing(10);
 
-        int resId = r["id"].toInt();
-        QString statut = r["statut"].toString();
-        QString dateEx = r["date_examen"].toString();
-        QString creneau = r["creneau"].toString();
-        double montant = r["montant_paye"].toDouble();
-        QString modele = r.contains("modele") ? r["modele"].toString() : "";
+        QLabel *dateL = new QLabel(
+            QString::fromUtf8("\xf0\x9f\x93\x85 ") + e.date, row);
+        dateL->setStyleSheet(
+            "QLabel{font-size:13px;font-weight:bold;color:#2d3436;"
+            "background:transparent;border:none;}");
+        rl->addWidget(dateL, 1);
 
-        // Status icon
-        QString stIcon = (statut == "APPROVED" || statut == "confirmee") ? QString::fromUtf8("\xe2\x9c\x85") :
-                          (statut == "CANCELLED" || statut == "annulee") ? QString::fromUtf8("\xe2\x9d\x8c") :
-                          QString::fromUtf8("\xe2\x8f\xb3");
-        QLabel *stLabel = new QLabel(stIcon, row);
-        stLabel->setFixedSize(24, 24);
-        stLabel->setAlignment(Qt::AlignCenter);
-        stLabel->setStyleSheet("QLabel{font-size:14px;background:transparent;border:none;}");
-        rl->addWidget(stLabel);
-
-        // Details
-        QVBoxLayout *detCol = new QVBoxLayout();
-        detCol->setSpacing(2);
-        QLabel *dateLbl = new QLabel(QString::fromUtf8(
-            "\xf0\x9f\x93\x85 %1  \xe2\x80\x94  \xe2\x8f\xb0 %2").arg(dateEx, creneau), row);
-        dateLbl->setStyleSheet("QLabel{font-size:11px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
-        detCol->addWidget(dateLbl);
-        if(!modele.isEmpty()){
-            QLabel *vehLbl = new QLabel(QString::fromUtf8(
-                "\xf0\x9f\x9a\x97 %1").arg(modele), row);
-            vehLbl->setStyleSheet("QLabel{font-size:9px;color:#636e72;background:transparent;border:none;}");
-            detCol->addWidget(vehLbl);
-        }
-        rl->addLayout(detCol, 1);
-
-        // Amount
-        QLabel *amtLbl = new QLabel(QString("%1 DT").arg(montant, 0, 'f', 1), row);
-        amtLbl->setStyleSheet("QLabel{font-size:11px;font-weight:bold;color:#e17055;"
-            "background:#fef3e2;border-radius:8px;padding:4px 10px;border:none;}");
-        rl->addWidget(amtLbl);
-
-        // Cancel button (only for PENDING)
-        if (statut == "PENDING" || statut == "en_attente") {
-            QPushButton *cancelBtn = new QPushButton(QString::fromUtf8("Cancel"), row);
-            cancelBtn->setCursor(Qt::PointingHandCursor);
-            cancelBtn->setStyleSheet("QPushButton{background:#ffeaa7;color:#d63031;border:none;border-radius:8px;"
-                "font-size:9px;font-weight:bold;padding:4px 10px;}"
-                "QPushButton:hover{background:#fdcb6e;}");
-            connect(cancelBtn, &QPushButton::clicked, this, [this, resId](){
-                if(QMessageBox::question(this, "Cancel Booking", 
-                    QString::fromUtf8("Are you sure you want to cancel your exam booking?")) == QMessageBox::Yes){
-                    ParkingDBManager::instance().updateReservationStatut(resId, "CANCELLED");
-                    showReservationDialog(); // Refresh
-                }
-            });
-            rl->addWidget(cancelBtn);
+        if (!e.location.isEmpty()) {
+            QLabel *locL = new QLabel(
+                QString::fromUtf8("\xf0\x9f\x93\x8d ") + e.location, row);
+            locL->setStyleSheet(
+                "QLabel{font-size:11px;color:#636e72;background:transparent;border:none;}");
+            rl->addWidget(locL);
         }
 
-        // Status badge
-        QString stColor = (statut == "APPROVED" || statut == "confirmee") ? "#00b894" :
-                           (statut == "CANCELLED" || statut == "annulee") ? "#e17055" : "#fdcb6e";
-        QString stBg = (statut == "APPROVED" || statut == "confirmee") ? "#e8f8f5" :
-                        (statut == "CANCELLED" || statut == "annulee") ? "#fef3e2" : "#fef9e7";
-        QString stText = (statut == "APPROVED" || statut == "confirmee") ? QString::fromUtf8("Confirmed") :
-                          (statut == "CANCELLED" || statut == "annulee") ? QString::fromUtf8("Cancelled") :
-                          QString::fromUtf8("Pending");
-        QLabel *stBadge = new QLabel(stText, row);
-        stBadge->setStyleSheet(QString("QLabel{font-size:9px;font-weight:bold;color:%1;"
-            "background:%2;border-radius:8px;padding:4px 10px;border:none;}").arg(stColor, stBg));
-        rl->addWidget(stBadge);
+        QLabel *badge = new QLabel(stText, row);
+        badge->setStyleSheet(
+            QString("QLabel{font-size:10px;font-weight:bold;color:%1;"
+                    "background:%2;border-radius:8px;padding:4px 10px;border:none;}")
+                .arg(stColor, stColor + "30"));
+        rl->addWidget(badge);
 
         m_reservationsLayout->addWidget(row);
-
-        // Separator
         QFrame *sep = new QFrame(this);
         sep->setFrameShape(QFrame::HLine);
         sep->setStyleSheet("QFrame{background:rgba(0,0,0,0.04);max-height:1px;border:none;}");
         m_reservationsLayout->addWidget(sep);
     }
+
+    // ── Empty state ───────────────────────────────────────────────────────
+    if (oracleExams.isEmpty()) {
+        QLabel *empty = new QLabel(
+            QString::fromUtf8(
+                "\xf0\x9f\x93\xad  Aucune inscription d'examen trouv\xc3\xa9" "e.\n"
+                "Utilisez l'onglet Sessions pour r\xc3\xa9server."),
+            this);
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setStyleSheet(
+            "QLabel{font-size:11px;color:#b2bec3;background:#f8f8f8;"
+            "border-radius:10px;padding:16px;border:none;}");
+        m_reservationsLayout->addWidget(empty);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// autoSelectVehicle — skip the vehicle-selection page.
+// Priority:
+//   1. The car used in the student's last CIRCUIT driving session (Oracle)
+//   2. First IS_PARKING_VEHICLE car from ParkingDBManager (SQLite/Oracle)
+//   3. Hard-coded default id=1
+// ─────────────────────────────────────────────────────────────────────────────
+void ParkingWidget::autoSelectVehicle()
+{
+    int vehicleId = -1;
+
+    // ── 1. Try Oracle: car used in circuit sessions ───────────────────────────
+    // SESSION_BOOKING might not carry car_id; try DRIVING_SESSIONS if it does
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(
+            "SELECT ds.car_id "
+            "FROM   DRIVING_SESSIONS ds "
+            "WHERE  ds.student_id = :sid "
+            "  AND  ds.session_type = 'CIRCUIT' "
+            "  AND  ds.car_id IS NOT NULL "
+            "ORDER  BY ds.created_at DESC "
+            "FETCH  FIRST 1 ROW ONLY"
+        );
+        q.bindValue(":sid", m_currentEleveId);
+        if (q.exec() && q.next()) {
+            int cid = q.value("car_id").toInt();
+            if (cid > 0) vehicleId = cid;
+        }
+    }
+
+    // ── 2. Fallback: first available parking vehicle ──────────────────────────
+    if (vehicleId <= 0) {
+        QList<QVariantMap> available = ParkingDBManager::instance().getVehiculesDisponibles();
+        if (!available.isEmpty()) {
+            vehicleId = available.first()["id"].toInt();
+        }
+    }
+
+    // ── 3. Hard-coded safety net ──────────────────────────────────────────────
+    if (vehicleId <= 0) vehicleId = 1;
+
+    onVehicleSelected(vehicleId);
 }
 
 void ParkingWidget::onVehicleSelected(int vehiculeId)
@@ -6509,7 +6765,7 @@ QString WeatherWidget::drivingTip(const QString &condition, double windSpeed, in
 
 PerformanceTrendWidget::PerformanceTrendWidget(QWidget *parent) : QWidget(parent)
 {
-    setMinimumHeight(180);
+    setMinimumHeight(220);  // enough vertical space to show the curve clearly
     setStyleSheet("background:transparent;");
 }
 
@@ -6942,35 +7198,102 @@ QWidget* ParkingWidget::createPerformanceTrendCard()
 {
     QFrame *card = new QFrame(this);
     card->setObjectName("trendCard");
-    card->setStyleSheet("QFrame#trendCard{background:white;border-radius:16px;"
-        "border:1px solid #e2e8f0;}");
-    auto *s = new QGraphicsDropShadowEffect(card);
-    s->setBlurRadius(16); s->setColor(QColor(0,0,0,15)); s->setOffset(0,4);
-    card->setGraphicsEffect(s);
+    card->setStyleSheet(
+        "QFrame#trendCard{background:white;border-radius:16px;border:1px solid #e2e8f0;}");
+    auto *sh = new QGraphicsDropShadowEffect(card);
+    sh->setBlurRadius(16); sh->setColor(QColor(0,0,0,15)); sh->setOffset(0,4);
+    card->setGraphicsEffect(sh);
 
     QVBoxLayout *l = new QVBoxLayout(card);
-    l->setContentsMargins(18, 14, 18, 14);
+    l->setContentsMargins(18, 14, 18, 10);
     l->setSpacing(8);
 
+    // ── Card header row ──────────────────────────────────────────────────
+    QHBoxLayout *hdrRow = new QHBoxLayout();
+    hdrRow->setSpacing(8);
+
+    QLabel *titleLbl = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x88  Score Trend — Historique des sessions"), card);
+    titleLbl->setStyleSheet(
+        "QLabel{font-size:13px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
+    hdrRow->addWidget(titleLbl, 1);
+
+    // Session count badge
+    int totalSess = ParkingDBManager::instance().getSessionCount(m_currentEleveId);
+    int totalSucc = ParkingDBManager::instance().getSuccessCount(m_currentEleveId);
+    int pct = totalSess > 0 ? (totalSucc * 100 / totalSess) : 0;
+    QLabel *statBadge = new QLabel(
+        QString::fromUtf8("%1 s\xc3\xa9ances  \xc2\xb7  %2%% r\xc3\xa9ussites")
+            .arg(totalSess).arg(pct), card);
+    statBadge->setStyleSheet(
+        "QLabel{font-size:10px;color:#636e72;background:#f8f8f8;"
+        "border-radius:8px;padding:3px 10px;border:none;}");
+    hdrRow->addWidget(statBadge);
+    l->addLayout(hdrRow);
+
+    // ── Per-maneuver mastery mini-bars ───────────────────────────────────
+    {
+        QHBoxLayout *barsRow = new QHBoxLayout();
+        barsRow->setSpacing(6);
+        QStringList shortNames = {
+            QString::fromUtf8("Par."),
+            QString::fromUtf8("Perp."),
+            QString::fromUtf8("Diag."),
+            QString::fromUtf8("Rev."),
+            QString::fromUtf8("U-turn")
+        };
+        QStringList barColors = {"#00b894","#0984e3","#6c5ce7","#e17055","#fdcb6e"};
+        for (int i = 0; i < 5 && i < m_maneuverAttemptCounts.size(); i++) {
+            int att = m_maneuverAttemptCounts[i];
+            int suc = m_maneuverSuccessCounts[i];
+            int pctM = att > 0 ? (suc * 100 / att) : 0;
+
+            QVBoxLayout *col = new QVBoxLayout();
+            col->setSpacing(2);
+            col->setAlignment(Qt::AlignHCenter);
+
+            QProgressBar *bar = new QProgressBar(card);
+            bar->setRange(0, 100);
+            bar->setValue(pctM);
+            bar->setFixedHeight(6);
+            bar->setTextVisible(false);
+            bar->setStyleSheet(
+                QString("QProgressBar{background:#f0f2f5;border-radius:3px;border:none;}"
+                        "QProgressBar::chunk{background:%1;border-radius:3px;}").arg(barColors[i]));
+            col->addWidget(bar);
+
+            QLabel *nm = new QLabel(
+                QString("%1\n%2%").arg(shortNames[i]).arg(pctM), card);
+            nm->setAlignment(Qt::AlignCenter);
+            nm->setStyleSheet(
+                "QLabel{font-size:8px;color:#636e72;background:transparent;border:none;}");
+            col->addWidget(nm);
+
+            barsRow->addLayout(col, 1);
+        }
+        l->addLayout(barsRow);
+    }
+
+    // ── Trend chart ──────────────────────────────────────────────────────
     m_trendWidget = new PerformanceTrendWidget(card);
 
-    // Load session data for trend
+    // Load initial session data (refreshTrendWidget() will be called again after sessions)
     auto sessions = ParkingDBManager::instance().getSessionsEleve(m_currentEleveId, 20);
-    QList<int> scores;
+    QList<int>  scores;
     QList<bool> successes;
-    // Reverse to show chronological order
     for (int i = sessions.size() - 1; i >= 0; i--) {
         const auto &s = sessions[i];
-        bool ok = s["reussi"].toBool();
-        int err = s["nb_erreurs"].toInt();
-        int cal = s["nb_calages"].toInt();
-        // Compute approximate score
-        int score = 100;
-        if (!ok) score -= 30;
-        score -= err * 10;
-        score -= cal * 15;
-        score = qMax(0, qMin(100, score));
-        scores.append(score);
+        bool ok  = s["reussi"].toBool();
+        int  err = s["nb_erreurs"].toInt();
+        int  cal = s["nb_calages"].toInt();
+        bool obs = s.contains("contact_obstacle") && s["contact_obstacle"].toBool();
+        int  sc  = 100;
+        if (!ok)  sc -= 30;
+        sc -= err * 10;
+        sc -= cal * 15;
+        if (obs)  sc -= 40;
+        sc = qMax(0, qMin(100, sc));
+        scores.append(sc);
         successes.append(ok);
     }
     m_trendWidget->setData(scores, successes);

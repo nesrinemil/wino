@@ -3,31 +3,74 @@
 #include "C:/Users/hboug/Downloads/final/SmartDrivingSchool/SmartDrivingSchool/circuitdb.h"
 #include "wino/wino_studentdashboard.h"
 #include "wino/wino_bootstrap.h"
+#include "wino/thememanager.h"
 #include <QHBoxLayout>
 #include <QApplication>
 #include <QScreen>
 #include <QSqlQuery>
 #include <QMessageBox>
+#include <QRegularExpression>
+#include <QTimer>
 
-// ── Palette ──────────────────────────────────────────────────────────────────
-#define HUB_BG          "#0F172A"
-#define HUB_SIDEBAR     "#111827"
-#define HUB_TEAL        "#14B8A6"
-#define HUB_BLUE        "#38BDF8"
-#define HUB_TEXT        "#E2E8F0"
-#define HUB_MUTED       "#64748B"
-#define HUB_ACTIVE      "rgba(20,184,166,0.15)"
-#define HUB_BORDER      "#1E293B"
-#define HUB_SUB_ACTIVE  "rgba(20,184,166,0.10)"
-#define HUB_LOCKED_TEXT "#475569"
+// ── Palette (theme-aware) ─────────────────────────────────────────────────────
+// All helpers read from ThemeManager at call time so they respond to toggles.
+static inline bool   hubDark()        { return ThemeManager::instance()->currentTheme() == ThemeManager::Dark; }
+static inline QString HUB_BG()        { return hubDark() ? "#0F172A"              : "#F1F5F9"; }
+static inline QString HUB_SIDEBAR()   { return hubDark() ? "#111827"              : "#FFFFFF"; }
+static inline QString HUB_TEAL()      { return "#14B8A6"; }
+static inline QString HUB_BLUE()      { return "#38BDF8"; }
+static inline QString HUB_TEXT()      { return hubDark() ? "#E2E8F0"              : "#111827"; }
+static inline QString HUB_MUTED()     { return hubDark() ? "#64748B"              : "#6B7280"; }
+static inline QString HUB_ACTIVE()    { return hubDark() ? "rgba(20,184,166,0.15)": "rgba(20,184,166,0.12)"; }
+static inline QString HUB_BORDER()    { return hubDark() ? "#1E293B"              : "#E2E8F0"; }
+static inline QString HUB_SUB_ACTIVE(){ return hubDark() ? "rgba(20,184,166,0.10)": "rgba(20,184,166,0.08)"; }
+static inline QString HUB_LOCKED_TEXT(){ return hubDark() ? "#475569"             : "#9CA3AF"; }
 
 // ── loadStudentStep ───────────────────────────────────────────────────────────
-// Reads progression from WINO_PROGRESS. Creates a default row if none exists.
-// current_step in DB: 1=Code, 2=Circuit, 3=Sessions  →  m_studentStep: 0,1,2
+// Reads progression from WINO_PROGRESS, bootstrapping from course_level when
+// the row doesn't yet exist OR when the stored step is behind the enrolled level.
+//
+// course_level (STUDENTS table) → initial WINO_PROGRESS state:
+//   "Theory"    → step 1, Code=IN_PROGRESS, Circuit=LOCKED,     Parking=LOCKED
+//   "Practical" → step 2, Code=COMPLETED,   Circuit=IN_PROGRESS, Parking=LOCKED
+//   "Parking"   → step 3, Code=COMPLETED,   Circuit=COMPLETED,   Parking=IN_PROGRESS
 void StudentLearningHub::loadStudentStep()
 {
     WinoBootstrap::bootstrap();
 
+    // ── 1. Read the student's registered course level ─────────────────────────
+    QString courseLevel = "Theory";   // safe default
+    {
+        QSqlQuery cl;
+        cl.prepare("SELECT NVL(course_level,'Theory') FROM STUDENTS WHERE id = ?");
+        cl.addBindValue(m_studentId);
+        if (cl.exec() && cl.next())
+            courseLevel = cl.value(0).toString();   // "Theory" | "Practical" | "Parking"
+    }
+
+    // Derive the minimum step & statuses that the course level implies
+    int    minStep       = 1;
+    QString codeStatus   = "IN_PROGRESS";
+    QString circStatus   = "LOCKED";
+    QString parkStatus   = "LOCKED";
+    double  codeFloor    = 0.0;
+    double  circFloor    = 0.0;
+
+    if (courseLevel == "Practical") {
+        minStep     = 2;
+        codeStatus  = "COMPLETED";
+        circStatus  = "IN_PROGRESS";
+        codeFloor   = 100.0;          // Code already fully achieved
+    } else if (courseLevel == "Parking") {
+        minStep     = 3;
+        codeStatus  = "COMPLETED";
+        circStatus  = "COMPLETED";
+        parkStatus  = "IN_PROGRESS";
+        codeFloor   = 100.0;
+        circFloor   = 100.0;          // Code + Circuit already fully achieved
+    }
+
+    // ── 2. Check for an existing WINO_PROGRESS row ───────────────────────────
     QSqlQuery q;
     q.prepare(
         "SELECT current_step, "
@@ -36,24 +79,64 @@ void StudentLearningHub::loadStudentStep()
     q.addBindValue(m_studentId);
 
     if (q.exec() && q.next()) {
-        int wStep       = q.value(0).toInt();
-        m_studentStep   = qBound(0, wStep - 1, 2);
-        m_codeScore     = q.value(1).toDouble();
-        m_circuitScore  = q.value(2).toDouble();
-        m_parkingScore  = q.value(3).toDouble();
+        int    wStep  = q.value(0).toInt();
+        double cScore = q.value(1).toDouble();
+        double rScore = q.value(2).toDouble();
+        double pScore = q.value(3).toDouble();
+
+        // ── 3. Correct the row if the stored step is behind course level ──────
+        //    (e.g. student registered as "Practical" but row was created as step=1)
+        if (wStep < minStep) {
+            QSqlQuery upd;
+            upd.prepare(
+                "UPDATE WINO_PROGRESS "
+                "SET current_step    = ?,"
+                "    code_status     = ?,"
+                "    circuit_status  = ?,"
+                "    parking_status  = ?,"
+                "    code_score      = GREATEST(NVL(code_score,0),    ?),"
+                "    circuit_score   = GREATEST(NVL(circuit_score,0), ?)"
+                "WHERE user_id = ?");
+            upd.addBindValue(minStep);
+            upd.addBindValue(codeStatus);
+            upd.addBindValue(circStatus);
+            upd.addBindValue(parkStatus);
+            upd.addBindValue(codeFloor);
+            upd.addBindValue(circFloor);
+            upd.addBindValue(m_studentId);
+            upd.exec();
+
+            wStep  = minStep;
+            cScore = qMax(cScore, codeFloor);
+            rScore = qMax(rScore, circFloor);
+        }
+
+        m_studentStep  = qBound(0, wStep - 1, 2);
+        m_codeScore    = cScore;
+        m_circuitScore = rScore;
+        m_parkingScore = pScore;
+
     } else {
-        // First login: create default progression row
+        // ── 4. First ever login: insert the correct initial row ───────────────
         QSqlQuery ins;
         ins.prepare(
             "INSERT INTO WINO_PROGRESS "
             "(user_id, current_step, code_status, circuit_status, parking_status,"
             " code_score, circuit_score, parking_score, total_score) "
-            "VALUES (?, 1, 'IN_PROGRESS', 'LOCKED', 'LOCKED', 0, 0, 0, 0)");
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)");
         ins.addBindValue(m_studentId);
+        ins.addBindValue(minStep);
+        ins.addBindValue(codeStatus);
+        ins.addBindValue(circStatus);
+        ins.addBindValue(parkStatus);
+        ins.addBindValue(codeFloor);
+        ins.addBindValue(circFloor);
+        ins.addBindValue(codeFloor + circFloor);   // total_score
         ins.exec();
-        m_studentStep  = 0;
-        m_codeScore    = 0;
-        m_circuitScore = 0;
+
+        m_studentStep  = qBound(0, minStep - 1, 2);
+        m_codeScore    = codeFloor;
+        m_circuitScore = circFloor;
         m_parkingScore = 0;
     }
 }
@@ -79,10 +162,16 @@ void StudentLearningHub::syncScoresToProgress()
         }
     }
 
-    // ── Circuit score: % sessions completed (max 25 sessions = 100%) ─────────
+    // ── Circuit score: % of analysed sessions (max 25 = 100%) ───────────────
+    // Only count sessions that have real SESSION_ANALYSIS data to avoid
+    // pre-populated test rows inflating the score.
     {
         QSqlQuery q;
-        q.prepare("SELECT COUNT(*) FROM DRIVING_SESSIONS WHERE student_id = ?");
+        q.prepare(
+            "SELECT COUNT(*) FROM DRIVING_SESSIONS ds "
+            "WHERE ds.student_id = ? "
+            "AND EXISTS (SELECT 1 FROM SESSION_ANALYSIS sa "
+            "            WHERE sa.driving_session_id = ds.driving_session_id)");
         q.addBindValue(m_studentId);
         if (q.exec() && q.next()) {
             int sessions = q.value(0).toInt();
@@ -104,7 +193,7 @@ void StudentLearningHub::updateScoreLabel(int activeStep)
     double score = (activeStep == 0) ? m_codeScore :
                    (activeStep == 1) ? m_circuitScore : m_parkingScore;
     QString stepName = (activeStep == 0) ? "Code" :
-                       (activeStep == 1) ? "Circuit" : "Sessions";
+                       (activeStep == 1) ? "Circuit" : "Parking";
     if (score > 0)
         m_stepScoreLbl->setText(QString("Score %1 : %2%").arg(stepName).arg(score, 0, 'f', 1));
     else
@@ -129,11 +218,12 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     setCentralWidget(root);
 
     // ── Left sidebar ─────────────────────────────────────────────────────────
-    QFrame *sidebar = new QFrame(root);
+    m_sidebar = new QFrame(root);
+    QFrame *sidebar = m_sidebar;   // local alias used throughout this constructor
     sidebar->setFixedWidth(230);
     sidebar->setStyleSheet(QString(
         "QFrame { background-color: %1; border-right: 1px solid %2; }")
-        .arg(HUB_SIDEBAR, HUB_BORDER));
+        .arg(HUB_SIDEBAR(), HUB_BORDER()));
 
     QVBoxLayout *sideLayout = new QVBoxLayout(sidebar);
     sideLayout->setContentsMargins(0, 0, 0, 0);
@@ -143,7 +233,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     auto addDivider = [&]() {
         QFrame *d = new QFrame(sidebar);
         d->setFrameShape(QFrame::HLine);
-        d->setStyleSheet(QString("background: %1; margin: 0;").arg(HUB_BORDER));
+        d->setStyleSheet(QString("background: %1; margin: 0;").arg(HUB_BORDER()));
         d->setFixedHeight(1);
         sideLayout->addWidget(d);
     };
@@ -156,12 +246,12 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     brand->setAlignment(Qt::AlignCenter);
     brand->setStyleSheet(QString(
         "font-size: 16px; font-weight: bold; color: %1; "
-        "background: transparent; padding-bottom: 2px;").arg(HUB_TEAL));
+        "background: transparent; padding-bottom: 2px;").arg(HUB_TEAL()));
     QLabel *platformSub = new QLabel("Learning Platform");
     platformSub->setAlignment(Qt::AlignCenter);
     platformSub->setStyleSheet(QString(
         "font-size: 11px; color: %1; background: transparent; "
-        "padding-bottom: 10px;").arg(HUB_MUTED));
+        "padding-bottom: 10px;").arg(HUB_MUTED()));
 
     sideLayout->addWidget(logo);
     sideLayout->addWidget(brand);
@@ -174,7 +264,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     QLabel *parcoursLbl = new QLabel(QString::fromUtf8("  🎯  MON PARCOURS"));
     parcoursLbl->setStyleSheet(QString(
         "font-size: 10px; font-weight: bold; color: %1; letter-spacing: 1px; "
-        "background: transparent; padding: 0 16px 8px 16px;").arg(HUB_MUTED));
+        "background: transparent; padding: 0 16px 8px 16px;").arg(HUB_MUTED()));
     sideLayout->addWidget(parcoursLbl);
 
     QWidget *stepTracker = new QWidget(sidebar);
@@ -192,7 +282,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     const QList<StepDef> stepDefs = {
         { "Code",    QString::fromUtf8("📖") },
         { "Circuit", QString::fromUtf8("🚦") },
-        { "Sessions",QString::fromUtf8("📅") },
+        { "Parking", QString::fromUtf8("🅿️") },
     };
 
     for (int i = 0; i < 3; ++i) {
@@ -204,8 +294,8 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
         circle->setFixedSize(32, 32);
         circle->setAlignment(Qt::AlignCenter);
 
-        // Sessions (i==2) is always accessible — never show lock icon
-        const bool isAlwaysOpen = (i == 2);
+        // Circuit (i==1) and Parking (i==2) are always accessible — never lock
+        const bool isAlwaysOpen = (i >= 1);
 
         if (m_studentStep > i) {
             // Completed
@@ -218,7 +308,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
             circle->setText(stepDefs[i].icon);
             circle->setStyleSheet(QString(
                 "background: #1E3A5F; color: %1; border-radius: 16px; "
-                "font-size: 14px; border: 2px solid %1;").arg(HUB_BLUE));
+                "font-size: 14px; border: 2px solid %1;").arg(HUB_BLUE()));
         } else {
             // Locked (only Circuit can be locked)
             circle->setText(QString::fromUtf8("🔒"));
@@ -232,7 +322,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
         nameLbl->setStyleSheet(QString(
             "font-size: 9px; font-weight: %1; color: %2; background: transparent;")
             .arg((m_studentStep >= i || isAlwaysOpen) ? "bold" : "normal")
-            .arg((m_studentStep >= i || isAlwaysOpen) ? HUB_TEXT : HUB_MUTED));
+            .arg((m_studentStep >= i || isAlwaysOpen) ? HUB_TEXT() : HUB_MUTED()));
 
         col->addWidget(circle, 0, Qt::AlignHCenter);
         col->addWidget(nameLbl, 0, Qt::AlignHCenter);
@@ -266,7 +356,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     QLabel *pctLbl = new QLabel(QString("Progression : %1%").arg(pct));
     pctLbl->setAlignment(Qt::AlignCenter);
     pctLbl->setStyleSheet(QString(
-        "font-size: 10px; color: %1; background: transparent;").arg(HUB_MUTED));
+        "font-size: 10px; color: %1; background: transparent;").arg(HUB_MUTED()));
     trackerLay->addWidget(pctLbl);
 
     // Step score label (updates when navigating tabs)
@@ -274,7 +364,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     m_stepScoreLbl->setAlignment(Qt::AlignCenter);
     m_stepScoreLbl->setStyleSheet(QString(
         "font-size: 11px; font-weight: bold; color: %1; "
-        "background: transparent;").arg(HUB_TEAL));
+        "background: transparent;").arg(HUB_TEAL()));
     trackerLay->addWidget(m_stepScoreLbl);
     updateScoreLabel(0);
 
@@ -286,21 +376,21 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     QLabel *navLabel = new QLabel("  NAVIGATION");
     navLabel->setStyleSheet(QString(
         "font-size: 10px; font-weight: bold; color: %1; letter-spacing: 2px; "
-        "background: transparent; padding: 0 20px 8px 20px;").arg(HUB_MUTED));
+        "background: transparent; padding: 0 20px 8px 20px;").arg(HUB_MUTED()));
     sideLayout->addWidget(navLabel);
 
-    const bool circuitLocked = (m_studentStep < 1);
+    const bool circuitLocked = false;  // unlocked for all students
 
     m_theoryBtn   = makeStepNavBtn(sidebar, 1, QString::fromUtf8("📖"), "Code / Théorie", false);
     m_circuitBtn  = makeStepNavBtn(sidebar, 2, QString::fromUtf8("🚦"), "Circuit",        circuitLocked);
-    m_sessionsBtn = makeStepNavBtn(sidebar, 3, QString::fromUtf8("📅"), "Sessions",       false);  // always accessible
-    m_parkingBtn   = makeStepNavBtn(sidebar, 4, QString::fromUtf8("🅿️"), "Parking",        false);
+    m_parkingBtn   = makeStepNavBtn(sidebar, 3, QString::fromUtf8("🅿️"), "Parking",        false);
+    m_sessionsBtn = makeStepNavBtn(sidebar, 4, QString::fromUtf8("📅"), "Sessions",       false);  // always accessible
     m_assistantBtn = makeStepNavBtn(sidebar, 5, QString::fromUtf8("🤖"), "Assistant Wino", false);
 
     sideLayout->addWidget(m_theoryBtn);
     sideLayout->addWidget(m_circuitBtn);
-    sideLayout->addWidget(m_sessionsBtn);
     sideLayout->addWidget(m_parkingBtn);
+    sideLayout->addWidget(m_sessionsBtn);
     sideLayout->addWidget(m_assistantBtn);
 
     // ── THEORY sub-navigation (shown when Theory is active) ───────────────────
@@ -313,7 +403,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     QLabel *learnLabel = new QLabel("  LEARNING");
     learnLabel->setStyleSheet(QString(
         "font-size: 10px; font-weight: bold; color: %1; letter-spacing: 2px; "
-        "background: transparent; padding: 8px 20px 6px 20px;").arg(HUB_MUTED));
+        "background: transparent; padding: 8px 20px 6px 20px;").arg(HUB_MUTED()));
     subLayout->addWidget(learnLabel);
 
     struct SubItem { QString icon; QString label; int idx; };
@@ -336,8 +426,8 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
             "border: none; border-left: 3px solid transparent; "
             "text-align: left; padding-left: 18px; "
             "font-size: 13px; font-weight: 500; border-radius: 0; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.05); color: %2; }")
-            .arg(HUB_MUTED, HUB_TEXT));
+            "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+            .arg(HUB_MUTED(), HUB_TEXT()));
         subLayout->addWidget(btn);
         m_theoryNavBtns.append(btn);
 
@@ -351,7 +441,7 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     // Reset progress button
     QFrame *resetDiv = new QFrame(m_theorySubNav);
     resetDiv->setFixedHeight(1);
-    resetDiv->setStyleSheet(QString("background: %1; margin: 6px 16px;").arg(HUB_BORDER));
+    resetDiv->setStyleSheet(QString("background: %1; margin: 6px 16px;").arg(HUB_BORDER()));
     subLayout->addWidget(resetDiv);
 
     QPushButton *resetBtn = new QPushButton(m_theorySubNav);
@@ -372,13 +462,39 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     sideLayout->addWidget(m_theorySubNav);
     sideLayout->addStretch();
 
+    // ── Theme toggle (bottom of sidebar) ─────────────────────────────────────
+    addDivider();
+    {
+        bool isDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
+
+        m_themeBtn = new QPushButton(sidebar);
+        m_themeBtn->setFixedHeight(44);
+        m_themeBtn->setCursor(Qt::PointingHandCursor);
+        m_themeBtn->setToolTip("Basculer entre mode clair / sombre");
+        m_themeBtn->setText(isDark
+            ? QString::fromUtf8("  ☀️  Mode clair")
+            : QString::fromUtf8("  🌙  Mode sombre"));
+        m_themeBtn->setStyleSheet(QString(
+            "QPushButton { background: transparent; color: %1; "
+            "border: none; border-left: 3px solid transparent; "
+            "text-align: left; padding-left: 16px; "
+            "font-size: 13px; font-weight: 500; border-radius: 0; }"
+            "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+            .arg(HUB_MUTED(), HUB_TEXT()));
+        connect(m_themeBtn, &QPushButton::clicked, []() {
+            ThemeManager::instance()->toggleTheme();
+        });
+        sideLayout->addWidget(m_themeBtn);
+        sideLayout->addSpacing(8);
+    }
+
     // ── Main content stack ────────────────────────────────────────────────────
     m_stack = new QStackedWidget(root);
-    m_stack->setStyleSheet(QString("background: %1;").arg(HUB_BG));
+    m_stack->setStyleSheet(QString("background: %1;").arg(HUB_BG()));
     m_stack->addWidget(new QWidget());  // index 0 = theory    placeholder
     m_stack->addWidget(new QWidget());  // index 1 = circuit   placeholder
-    m_stack->addWidget(new QWidget());  // index 2 = sessions  placeholder
-    m_stack->addWidget(new QWidget());  // index 3 = parking   placeholder
+    m_stack->addWidget(new QWidget());  // index 2 = parking   placeholder
+    m_stack->addWidget(new QWidget());  // index 3 = sessions  placeholder
     m_stack->addWidget(new QWidget());  // index 4 = assistant placeholder
 
     rootLayout->addWidget(sidebar);
@@ -390,7 +506,22 @@ StudentLearningHub::StudentLearningHub(int studentId, QWidget *parent)
     connect(m_parkingBtn,   &QPushButton::clicked, this, &StudentLearningHub::showParking);
     connect(m_assistantBtn, &QPushButton::clicked, this, &StudentLearningHub::showAssistant);
 
-    showTheory();
+    // ── Theme: redraw sidebar whenever the user toggles light/dark ───────────
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &StudentLearningHub::applyTheme);
+
+    // ── Apply saved theme immediately on startup ─────────────────────────────
+    // Ensures the app opens in the correct light/dark state from QSettings.
+    applyTheme();
+
+    // ── Navigate directly to the student's current step on login ─────────────
+    // m_studentStep: 0=Code, 1=Circuit, 2=Sessions/Parking
+    if (m_studentStep >= 2)
+        showParking();     // Parking course level → land on Parking
+    else if (m_studentStep == 1)
+        showCircuit();     // Practical course level → land on Circuit
+    else
+        showTheory();      // Theory (default) → land on Code
 }
 
 // ── makeStepNavBtn ────────────────────────────────────────────────────────────
@@ -412,7 +543,7 @@ QPushButton* StudentLearningHub::makeStepNavBtn(QWidget *parent, int stepNum,
             "border: none; border-left: 3px solid transparent; "
             "text-align: left; padding-left: 16px; "
             "font-size: 13px; font-weight: 400; border-radius: 0; }")
-            .arg(HUB_LOCKED_TEXT));
+            .arg(HUB_LOCKED_TEXT()));
     } else {
         btn->setText(QString("  %1  %2 · %3").arg(icon).arg(stepNum).arg(label));
         btn->setEnabled(true);
@@ -422,8 +553,8 @@ QPushButton* StudentLearningHub::makeStepNavBtn(QWidget *parent, int stepNum,
             "border: none; border-left: 3px solid transparent; "
             "text-align: left; padding-left: 16px; "
             "font-size: 14px; font-weight: 500; border-radius: 0; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.05); color: %2; }")
-            .arg(HUB_MUTED, HUB_TEXT));
+            "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+            .arg(HUB_MUTED(), HUB_TEXT()));
     }
     return btn;
 }
@@ -431,10 +562,11 @@ QPushButton* StudentLearningHub::makeStepNavBtn(QWidget *parent, int stepNum,
 // ── setActiveBtn ──────────────────────────────────────────────────────────────
 void StudentLearningHub::setActiveBtn(QPushButton *active)
 {
+    m_activeMainBtn = active;   // remember for applyTheme()
     struct BtnInfo { QPushButton *btn; bool locked; };
     const QList<BtnInfo> btns = {
         { m_theoryBtn,   false             },
-        { m_circuitBtn,  m_studentStep < 1 },
+        { m_circuitBtn,  false },  // unlocked for all students
         { m_sessionsBtn, false             },  // Sessions always accessible
         { m_parkingBtn,  false             },  // Parking always accessible
     };
@@ -448,15 +580,15 @@ void StudentLearningHub::setActiveBtn(QPushButton *active)
                 "border-left: 3px solid %2; text-align: left; padding-left: 13px; "
                 "font-size: 14px; font-weight: 600; border-radius: 0; "
                 "border-top: none; border-right: none; border-bottom: none; }")
-                .arg(HUB_ACTIVE, HUB_TEAL));
+                .arg(HUB_ACTIVE(), HUB_TEAL()));
         } else {
             bi.btn->setStyleSheet(QString(
                 "QPushButton { background: transparent; color: %1; "
                 "border: none; border-left: 3px solid transparent; "
                 "text-align: left; padding-left: 16px; "
                 "font-size: 14px; font-weight: 500; border-radius: 0; }"
-                "QPushButton:hover { background: rgba(255,255,255,0.05); color: %2; }")
-                .arg(HUB_MUTED, HUB_TEXT));
+                "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+                .arg(HUB_MUTED(), HUB_TEXT()));
         }
     }
 }
@@ -472,15 +604,15 @@ void StudentLearningHub::setActiveTheoryBtn(int index)
                 "border-left: 3px solid %2; text-align: left; padding-left: 15px; "
                 "font-size: 13px; font-weight: 600; border-radius: 0; "
                 "border-top: none; border-right: none; border-bottom: none; }")
-                .arg(HUB_SUB_ACTIVE, HUB_TEAL));
+                .arg(HUB_SUB_ACTIVE(), HUB_TEAL()));
         } else {
             m_theoryNavBtns[i]->setStyleSheet(QString(
                 "QPushButton { background: transparent; color: %1; "
                 "border: none; border-left: 3px solid transparent; "
                 "text-align: left; padding-left: 18px; "
                 "font-size: 13px; font-weight: 500; border-radius: 0; }"
-                "QPushButton:hover { background: rgba(255,255,255,0.05); color: %2; }")
-                .arg(HUB_MUTED, HUB_TEXT));
+                "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+                .arg(HUB_MUTED(), HUB_TEXT()));
         }
     }
 }
@@ -504,14 +636,6 @@ void StudentLearningHub::showTheory()
 // ── showCircuit ───────────────────────────────────────────────────────────────
 void StudentLearningHub::showCircuit()
 {
-    if (m_studentStep < 1) {
-        QMessageBox::information(this,
-            QString::fromUtf8("🔒 Étape verrouillée"),
-            "Vous devez valider l'étape Code / Théorie avant d'accéder au Circuit.\n\n"
-            "Complétez les cours et les quiz de Théorie pour débloquer cette section.");
-        return;
-    }
-
     setActiveBtn(m_circuitBtn);
     m_theorySubNav->setVisible(false);
     updateScoreLabel(1);
@@ -536,6 +660,8 @@ void StudentLearningHub::showCircuit()
         m_circuitPage = portal;
         m_stack->removeWidget(m_stack->widget(1));
         m_stack->insertWidget(1, m_circuitPage);
+        // Re-apply theme after the global stylesheet settles (singleShot(0) fires first)
+        QTimer::singleShot(50, portal, [portal]() { portal->applyTheme(); });
     }
     m_stack->setCurrentIndex(1);
 }
@@ -550,19 +676,30 @@ void StudentLearningHub::showSessions()
     m_theorySubNav->setVisible(false);
     updateScoreLabel(m_studentStep);  // show score of the student's current step
 
-    // Always recreate to show up-to-date scores after sync
+    // Always recreate to show up-to-date scores after sync.
+    // IMPORTANT: do NOT call removeWidget(widget(3)) after removing m_sessionsPage —
+    // once m_sessionsPage is removed, index 3 belongs to the next widget (assistant)
+    // and removing it again would silently delete the assistant from the stack.
+    WinoBootstrap::bootstrap();
+    qApp->setProperty("currentUserId", m_studentId);
+
+    WinoStudentDashboard *newPage = new WinoStudentDashboard(this);
+
     if (m_sessionsPage) {
+        // Replace the existing sessions widget in-place without touching other indices
+        int idx = m_stack->indexOf(m_sessionsPage);
         m_stack->removeWidget(m_sessionsPage);
         delete m_sessionsPage;
         m_sessionsPage = nullptr;
+        m_stack->insertWidget(idx, newPage);
+        m_stack->setCurrentIndex(idx);
+    } else {
+        // First time: replace the placeholder at index 3
+        m_stack->removeWidget(m_stack->widget(3));
+        m_stack->insertWidget(3, newPage);
+        m_stack->setCurrentIndex(3);
     }
-
-    WinoBootstrap::bootstrap();
-    qApp->setProperty("currentUserId", m_studentId);
-    m_sessionsPage = new WinoStudentDashboard(this);
-    m_stack->removeWidget(m_stack->widget(2));
-    m_stack->insertWidget(2, m_sessionsPage);
-    m_stack->setCurrentIndex(2);
+    m_sessionsPage = newPage;
 }
 
 // ── showParking ───────────────────────────────────────────────────────────────
@@ -582,10 +719,10 @@ void StudentLearningHub::showParking()
             m_studentId,          // userId
             this
         );
-        m_stack->removeWidget(m_stack->widget(3));
-        m_stack->insertWidget(3, m_parkingPage);
+        m_stack->removeWidget(m_stack->widget(2));
+        m_stack->insertWidget(2, m_parkingPage);
     }
-    m_stack->setCurrentIndex(3);
+    m_stack->setCurrentIndex(2);
 }
 
 // ── showAssistant ─────────────────────────────────────────────────────────────
@@ -605,4 +742,125 @@ void StudentLearningHub::showAssistant()
         m_stack->insertWidget(4, m_assistantPage);
     }
     m_stack->setCurrentIndex(4);
+}
+
+// ── applyTheme ────────────────────────────────────────────────────────────────
+// Central theme dispatcher — called whenever ThemeManager emits themeChanged.
+// 1. Applies a global QApplication stylesheet so every QWidget in the app responds.
+// 2. Re-styles the sidebar widgets specifically (hardcoded-color elements).
+// 3. WinoStudentDashboard updates itself via its own ThemeManager connection.
+void StudentLearningHub::applyTheme()
+{
+    if (!m_sidebar) return;
+    ThemeManager *tm = ThemeManager::instance();
+    bool isDark = (tm->currentTheme() == ThemeManager::Dark);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GLOBAL stylesheet — cascades to ALL QWidget instances in the entire app.
+    // Per-widget stylesheets that are set explicitly take precedence over these.
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Build the global stylesheet string now (captures current theme colors),
+    // but apply it deferred so it runs AFTER all themeChanged slots complete.
+    // Calling qApp->setStyleSheet() synchronously inside a slot triggers an
+    // immediate style-change event on every widget, which can crash if other
+    // slots in the same signal dispatch are concurrently creating/destroying widgets.
+    QString globalSS = QString(
+        "QMainWindow, QDialog { background-color: %1; }"
+        "QWidget { background-color: %1; color: %2; }"
+        "QFrame { background-color: %3; color: %2; }"
+        "QLabel { color: %2; background: transparent; }"
+        "QScrollArea { background-color: %1; border: none; }"
+        "QScrollBar:vertical { background: %4; width: 8px; border-radius: 4px; }"
+        "QScrollBar::handle:vertical { background: %5; border-radius: 4px; min-height: 30px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }"
+        "QPushButton { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 6px 14px; }"
+        "QPushButton:hover { background-color: %4; }"
+        "QLineEdit, QTextEdit, QPlainTextEdit { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 4px 8px; }"
+        "QComboBox { background-color: %3; color: %2; border: 1px solid %4; border-radius: 6px; padding: 4px 8px; }"
+        "QComboBox QAbstractItemView { background-color: %3; color: %2; selection-background-color: %5; }"
+        "QTableWidget, QListWidget, QTreeWidget { background-color: %3; color: %2; gridline-color: %4; border: 1px solid %4; }"
+        "QTableWidget::item:selected, QListWidget::item:selected { background-color: %5; color: white; }"
+        "QHeaderView::section { background-color: %4; color: %2; border: none; padding: 6px; }"
+        "QTabBar::tab { background-color: %3; color: %2; border: 1px solid %4; padding: 8px 16px; }"
+        "QTabBar::tab:selected { background-color: %1; color: %6; border-bottom: 2px solid %6; }"
+        "QGroupBox { color: %2; border: 1px solid %4; border-radius: 8px; margin-top: 12px; padding-top: 8px; }"
+        "QGroupBox::title { color: %2; subcontrol-origin: margin; left: 12px; }"
+        "QToolTip { background-color: %3; color: %2; border: 1px solid %4; border-radius: 4px; padding: 4px 8px; }"
+    )
+    .arg(tm->backgroundColor())
+    .arg(tm->primaryTextColor())
+    .arg(tm->cardColor())
+    .arg(tm->borderColor())
+    .arg(tm->accentColor())
+    .arg(tm->accentColor());
+
+    QTimer::singleShot(0, qApp, [globalSS]() {
+        qApp->setStyleSheet(globalSS);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SIDEBAR — re-apply since it has explicit per-widget stylesheets set at
+    // construction time (those override the global stylesheet above).
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // 1. Sidebar frame background
+    m_sidebar->setStyleSheet(QString(
+        "QFrame { background-color: %1; border-right: 1px solid %2; }")
+        .arg(HUB_SIDEBAR(), HUB_BORDER()));
+
+    // 2. Main stack background
+    m_stack->setStyleSheet(QString("background: %1;").arg(HUB_BG()));
+
+    // 3. Step score label
+    if (m_stepScoreLbl)
+        m_stepScoreLbl->setStyleSheet(QString(
+            "font-size: 11px; font-weight: bold; color: %1; background: transparent;")
+            .arg(HUB_TEAL()));
+
+    // 4. Sidebar labels — update all color values in their existing stylesheets
+    for (QLabel *lbl : m_sidebar->findChildren<QLabel*>()) {
+        QString cur = lbl->styleSheet();
+        if (cur.contains("#14B8A6") || cur.contains("font-size: 32px") || cur.isEmpty())
+            continue;
+        lbl->setStyleSheet(cur.replace(
+            QRegularExpression("color:\\s*#[0-9A-Fa-f]{3,6}"),
+            QString("color: %1").arg(HUB_TEXT())));
+    }
+
+    // 5. Nav buttons (inactive + active state)
+    if (m_activeMainBtn)
+        setActiveBtn(m_activeMainBtn);
+
+    // 6. Theory sub-nav buttons
+    for (QPushButton *btn : m_theoryNavBtns) {
+        btn->setStyleSheet(QString(
+            "QPushButton { background: transparent; color: %1; "
+            "border: none; border-left: 3px solid transparent; "
+            "text-align: left; padding-left: 18px; "
+            "font-size: 13px; font-weight: 500; border-radius: 0; }"
+            "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+            .arg(HUB_MUTED(), HUB_TEXT()));
+    }
+    if (m_activeTheoryIdx >= 0 && m_activeTheoryIdx < m_theoryNavBtns.size())
+        setActiveTheoryBtn(m_activeTheoryIdx);
+
+    // 7. Theme toggle button label + style
+    if (m_themeBtn) {
+        m_themeBtn->setText(isDark
+            ? QString::fromUtf8("  ☀️  Mode clair")
+            : QString::fromUtf8("  🌙  Mode sombre"));
+        m_themeBtn->setStyleSheet(QString(
+            "QPushButton { background: transparent; color: %1; "
+            "border: none; border-left: 3px solid transparent; "
+            "text-align: left; padding-left: 16px; "
+            "font-size: 13px; font-weight: 500; border-radius: 0; }"
+            "QPushButton:hover { background: rgba(128,128,128,0.08); color: %2; }")
+            .arg(HUB_MUTED(), HUB_TEXT()));
+    }
+
+    // 8. Parking page background (static BG color doesn't respond to global SS)
+    if (m_parkingPage) {
+        m_parkingPage->setStyleSheet(QString("background: %1;")
+            .arg(isDark ? "#1a2332" : "#f0f2f5"));
+    }
 }

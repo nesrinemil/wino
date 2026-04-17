@@ -1,17 +1,18 @@
 #include "emailservice.h"
 
-#include <QNetworkRequest>
 #include <QJsonObject>
 #include <QJsonDocument>
-#include <QUrl>
 #include <QDebug>
+#include <QProcess>
+#include <QTemporaryFile>
+#include <QDir>
 
 // ══════════════════════════════════════════════════════════════════
 //  ★  PASTE YOUR EmailJS CREDENTIALS HERE  ★
 //  Get them from https://www.emailjs.com/
 // ══════════════════════════════════════════════════════════════════
 const QString EmailService::SERVICE_ID  = "service_p36rptr";
-const QString EmailService::TEMPLATE_ID = "template_xdysak3";
+const QString EmailService::TEMPLATE_ID = "template_zktkmlw";
 const QString EmailService::PUBLIC_KEY  = "LIrNoj7apDLfK2zFG";
 // ══════════════════════════════════════════════════════════════════
 
@@ -23,8 +24,7 @@ EmailService &EmailService::instance()
 }
 
 EmailService::EmailService(QObject *parent)
-    : QObject(parent),
-      m_manager(new QNetworkAccessManager(this))
+    : QObject(parent)
 {}
 
 // ─────────────────────────────────────────────────────────────────
@@ -138,6 +138,9 @@ void EmailService::postToEmailJS(const QString &toName,
     QJsonObject templateParams;
     templateParams["to_name"]     = toName;
     templateParams["to_email"]    = toEmail;
+    templateParams["name"]        = toName;       // template uses {{name}}
+    templateParams["email"]       = toEmail;      // template uses {{email}}
+    templateParams["title"]       = subject;      // template uses {{title}}
     templateParams["subject"]     = subject;
     templateParams["message"]     = message;
     templateParams["school_name"] = schoolName;
@@ -149,24 +152,48 @@ void EmailService::postToEmailJS(const QString &toName,
     body["user_id"]          = PUBLIC_KEY;
     body["template_params"]  = templateParams;
 
-    QNetworkRequest request(QUrl("https://api.emailjs.com/api/v1.0/email/send"));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    // Write JSON body to a temp file (same approach as TrafficSignWidget — uses system curl)
+    QTemporaryFile *tmpFile = new QTemporaryFile(this);
+    tmpFile->setFileTemplate(QDir::tempPath() + "/emailjs_XXXXXX.json");
+    if (!tmpFile->open()) {
+        emit emailFailed("Failed to create temp file for email request");
+        return;
+    }
+    tmpFile->write(QJsonDocument(body).toJson(QJsonDocument::Compact));
+    tmpFile->flush();
+    tmpFile->close();
 
-    QNetworkReply *reply = m_manager->post(
-        request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    QProcess *proc = new QProcess(this);
+    QStringList args;
+    args << "-s"
+         << "-X" << "POST"
+         << "https://api.emailjs.com/api/v1.0/email/send"
+         << "-H" << "Content-Type: application/json"
+         << "--data-binary" << ("@" + tmpFile->fileName());
 
-    // Handle response async
-    connect(reply, &QNetworkReply::finished, this, [this, reply, toEmail]() {
-        if (reply->error() == QNetworkReply::NoError) {
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc, tmpFile, toEmail](int exitCode, QProcess::ExitStatus) {
+        QByteArray out  = proc->readAllStandardOutput();
+        QByteArray errB = proc->readAllStandardError();
+        proc->deleteLater();
+        tmpFile->deleteLater();
+
+        QString response = QString::fromUtf8(out).trimmed();
+        qDebug() << "[EmailJS] Response:" << response << "stderr:" << errB;
+
+        // EmailJS returns "OK" on success, or a JSON error object
+        if (exitCode == 0 && (response == "OK" || response.isEmpty())) {
             qDebug() << "[EmailJS] ✅ Email sent to:" << toEmail;
             emit emailSent(toEmail);
+        } else if (exitCode != 0) {
+            QString err = QString::fromUtf8(errB).trimmed();
+            qWarning() << "[EmailJS] ❌ curl error:" << err;
+            emit emailFailed("curl error: " + err);
         } else {
-            QString err = reply->errorString();
-            QString resp = QString::fromUtf8(reply->readAll());
-            qDebug() << "[EmailJS] ❌ Failed to send email to:" << toEmail
-                     << "Error:" << err << resp;
-            emit emailFailed(err);
+            qWarning() << "[EmailJS] ❌ API error:" << response;
+            emit emailFailed(response);
         }
-        reply->deleteLater();
     });
+
+    proc->start("curl", args);
 }

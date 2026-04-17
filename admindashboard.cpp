@@ -644,38 +644,6 @@ void AdminDashboard::onAddSchoolClicked()
     stack->addWidget(page1);   // stack index 0
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  PAGE 1 (stack index 1) — ADMIN INSTRUCTOR
-    // ═══════════════════════════════════════════════════════════════════════
-    QWidget *page2 = new QWidget();
-    QVBoxLayout *p2 = new QVBoxLayout(page2);
-    p2->setSpacing(10);
-
-    QLabel *step2Label = stepLabel("STEP 2  —  ADMIN INSTRUCTOR ACCOUNT");
-    p2->addWidget(step2Label);
-    p2->addWidget(titleLabel("Admin Instructor Credentials"));
-    p2->addSpacing(4);
-    p2->addWidget(noteLabel("This account will have admin-level access for the school."));
-    p2->addSpacing(4);
-
-    QLineEdit *adminNameEdit  = makeField("Full name *");
-    QLineEdit *adminEmailEdit = makeField("Email address *");
-    QLineEdit *adminPwdEdit   = makeField("Password *", true);
-    QLineEdit *adminCfmEdit   = makeField("Confirm password *", true);
-    p2->addWidget(adminNameEdit);
-    p2->addWidget(adminEmailEdit);
-    p2->addWidget(adminPwdEdit);
-    p2->addWidget(adminCfmEdit);
-    p2->addWidget(noteLabel("Password must be at least 6 characters."));
-
-    QHBoxLayout *p2Btns = new QHBoxLayout(); p2Btns->setSpacing(10);
-    QPushButton *back2Btn = btnSecondary("← Back");
-    QPushButton *next2Btn = btnPrimary("Next  →");
-    p2Btns->addWidget(back2Btn);
-    p2Btns->addWidget(next2Btn);
-    p2->addLayout(p2Btns);
-    stack->addWidget(page2);   // stack index 1
-
-    // ═══════════════════════════════════════════════════════════════════════
     //  INSTRUCTOR PAGES (stack indices 2 … 2+N-1) — built dynamically
     //  We keep them in a vector; we rebuild when numInstructors changes.
     //  For simplicity we pre-build up to 20 pages and show/navigate them.
@@ -702,7 +670,7 @@ void AdminDashboard::onAddSchoolClicked()
         QVBoxLayout *lay = new QVBoxLayout(pg);
         lay->setSpacing(10);
 
-        QLabel *sLbl = stepLabel(QString("STEP %1  —  INSTRUCTOR %2").arg(i + 3).arg(i + 1));
+        QLabel *sLbl = stepLabel(QString("STEP %1  —  INSTRUCTOR %2").arg(i + 2).arg(i + 1));
         lay->addWidget(sLbl);
         lay->addWidget(titleLabel(QString("Instructor #%1 Details").arg(i + 1)));
         lay->addSpacing(4);
@@ -754,29 +722,28 @@ void AdminDashboard::onAddSchoolClicked()
         lay->addLayout(btns);
 
         instrPages[i] = { ne, ee, pe, d17, pw, cm, sLbl, bk, nx };
-        stack->addWidget(pg);   // stack index = 2 + i
+        stack->addWidget(pg);   // stack index = 1 + i
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     //  HELPERS that depend on instrCount
     // ═══════════════════════════════════════════════════════════════════════
 
-    // totalSteps = school(1) + admin(1) + N instructors
+    // totalSteps = school(1) + N instructors
     // We'll compute it inside each lambda via instrCountSpin->value()
 
-    auto totalSteps = [instrCountSpin]() { return 2 + instrCountSpin->value(); };
+    auto totalSteps = [instrCountSpin]() { return 1 + instrCountSpin->value(); };
 
     // Update all step labels to reflect current N
     auto refreshLabels = [&]() {
         int n = instrCountSpin->value();
-        int tot = 2 + n;
+        int tot = 1 + n;
         step1Label->setText(QString("STEP 1 OF %1  —  SCHOOL INFORMATION").arg(tot));
-        step2Label->setText(QString("STEP 2 OF %1  —  ADMIN INSTRUCTOR ACCOUNT").arg(tot));
         for (int i = 0; i < MAX_INSTR; ++i) {
             instrPages[i].stepLbl->setText(
-                QString("STEP %1 OF %2  —  INSTRUCTOR %3").arg(i + 3).arg(tot).arg(i + 1));
+                QString("STEP %1 OF %2  —  INSTRUCTOR %3").arg(i + 2).arg(tot).arg(i + 1));
             // Update "N" in badge label
-            QWidget *pg = stack->widget(2 + i);
+            QWidget *pg = stack->widget(1 + i);
             QList<QLabel*> labels = pg->findChildren<QLabel*>();
             for (auto *lbl : labels) {
                 if (lbl->text().startsWith(" Instructor ") && lbl->text().contains(" of ")) {
@@ -799,15 +766,15 @@ void AdminDashboard::onAddSchoolClicked()
                 }
             }
         }
-        // When n == 0, admin page "Next" becomes "Create School"
+        // When n == 0, school page "Next" becomes "Create School"
         if (n == 0) {
-            next2Btn->setText("✓  Create School");
-            next2Btn->setStyleSheet(
+            next1Btn->setText("✓  Create School");
+            next1Btn->setStyleSheet(
                 "background:#10B981;color:white;border:none;border-radius:6px;"
                 "padding:10px;font-size:14px;font-weight:bold;margin-top:8px;");
         } else {
-            next2Btn->setText("Next  →");
-            next2Btn->setStyleSheet(
+            next1Btn->setText("Next  →");
+            next1Btn->setStyleSheet(
                 "background:#14B8A6;color:white;border:none;border-radius:6px;"
                 "padding:10px;font-size:14px;font-weight:bold;margin-top:8px;");
         }
@@ -853,22 +820,7 @@ void AdminDashboard::onAddSchoolClicked()
 
         QString schoolName = nameEdit->text().trimmed();
 
-        // ── Insert admin instructor into INSTRUCTORS ───────────────────
-        QSqlQuery aq;
-        aq.prepare(
-            "INSERT INTO instructors (school_id, full_name, email, password_hash, role) "
-            "VALUES (?, ?, ?, ?, 'admin')");
-        aq.addBindValue(newSchoolId);
-        aq.addBindValue(adminNameEdit->text().trimmed());
-        aq.addBindValue(adminEmailEdit->text().trimmed());
-        aq.addBindValue(hashPwd(adminPwdEdit->text()));
-        if (!aq.exec()) {
-            QMessageBox::critical(dialog, "Database Error",
-                "School created but failed to create admin instructor:\n" + aq.lastError().text());
-            dialog->accept(); loadSchools(); return;
-        }
-
-        // ── Insert normal instructors into INSTRUCTORS ─────────────────
+        // ── Insert instructors into INSTRUCTORS ────────────────────────
         int n = instrCountSpin->value();
         int insertedNormal = 0;
         for (int i = 0; i < n; ++i) {
@@ -887,26 +839,12 @@ void AdminDashboard::onAddSchoolClicked()
             }
         }
 
-        QString msg = "Driving school created successfully!\nStatus: Active\n\nAdmin instructor account created.";
+        QString msg = "Driving school created successfully!\nStatus: Active";
         if (n > 0)
-            msg += QString("\n%1 normal instructor(s) added.").arg(insertedNormal);
+            msg += QString("\n%1 instructor(s) added.").arg(insertedNormal);
 
         // ── Send email notifications via EmailJS ──────────────────
         EmailService &email = EmailService::instance();
-
-        // Notify the admin instructor that their account is ready
-        email.sendEmail(
-            adminNameEdit->text().trimmed(),
-            adminEmailEdit->text().trimmed(),
-            "🏫 Your School Account is Ready — " + nameEdit->text().trimmed(),
-            "Hello " + adminNameEdit->text().trimmed() + ",\n\n"
-            "Your driving school \"" + nameEdit->text().trimmed() + "\" has been successfully "
-            "registered on the Wino platform.\n\n"
-            "Your admin instructor account has been created.\n"
-            "You can now log in to manage students, vehicles, and sessions.\n\n"
-            "— Wino Driving School Platform",
-            nameEdit->text().trimmed()
-        );
 
         // Notify each instructor their account is created
         for (int i = 0; i < n; ++i) {
@@ -930,46 +868,18 @@ void AdminDashboard::onAddSchoolClicked()
     //  CONNECTIONS
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Step 1 → 2
+    // Step 1 → first instructor page (or submit if N=0)
     connect(next1Btn, &QPushButton::clicked, [=]() {
         if (nameEdit->text().trimmed().isEmpty()) {
             QMessageBox::warning(dialog, "Validation", "School name is required.");
-            return;
-        }
-        stack->setCurrentIndex(1);
-        updateProgress(1, totalSteps());
-    });
-
-    // Step 2 ← back
-    connect(back2Btn, &QPushButton::clicked, [=]() {
-        stack->setCurrentIndex(0);
-        updateProgress(0, totalSteps());
-    });
-
-    // Step 2 → (either first instructor page or submit if N=0)
-    connect(next2Btn, &QPushButton::clicked, [=, &instrPages]() {
-        if (adminNameEdit->text().trimmed().isEmpty()) {
-            QMessageBox::warning(dialog, "Validation", "Admin instructor full name is required.");
-            return;
-        }
-        if (adminEmailEdit->text().trimmed().isEmpty()) {
-            QMessageBox::warning(dialog, "Validation", "Admin instructor email is required.");
-            return;
-        }
-        if (adminPwdEdit->text().length() < 6) {
-            QMessageBox::warning(dialog, "Validation", "Admin password must be at least 6 characters.");
-            return;
-        }
-        if (adminPwdEdit->text() != adminCfmEdit->text()) {
-            QMessageBox::warning(dialog, "Validation", "Admin passwords do not match.");
             return;
         }
         int n = instrCountSpin->value();
         if (n == 0) {
             doSubmit();
         } else {
-            stack->setCurrentIndex(2);
-            updateProgress(2, totalSteps());
+            stack->setCurrentIndex(1);
+            updateProgress(1, totalSteps());
         }
     });
 
@@ -1021,7 +931,7 @@ void AdminDashboard::onAddSchoolClicked()
                 // Last instructor — submit
                 doSubmit();
             } else {
-                int nextIdx = 2 + i + 1;
+                int nextIdx = 1 + i + 1;
                 stack->setCurrentIndex(nextIdx);
                 updateProgress(nextIdx, totalSteps());
             }
@@ -1035,7 +945,11 @@ void AdminDashboard::onAddSchoolClicked()
 
 void AdminDashboard::onLogoutClicked()
 {
+    qApp->setStyleSheet("");
+
     MainWindow *loginWindow = new MainWindow();
+    loginWindow->show();
     loginWindow->showMaximized();
-    this->close();
+    this->hide();
+    this->deleteLater();
 }

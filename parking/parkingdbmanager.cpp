@@ -154,6 +154,7 @@ void ParkingDBManager::createTables()
     createSeqIfNotExists("cars_seq");
     createSeqIfNotExists("students_seq");
     createSeqIfNotExists("SEQ_EXAM_REQUEST_ID");
+    createSeqIfNotExists("seq_parking_session_id");   // used by startSession() INSERT
 
     // ── PARKING_MANEUVER_STEPS : ajouter colonne youtube_url si manquante ──
     {
@@ -763,23 +764,36 @@ bool ParkingDBManager::deleteVehicule(int id)
 int ParkingDBManager::startSession(int eleveId, int vehiculeId,
                                    const QString &manoeuvreType, bool modeExamen)
 {
-    if (!isConnected()) return -1;
+    if (!isConnected()) { qDebug() << "[DB] startSession: not connected"; return -1; }
     QSqlQuery q(m_db);
-    q.prepare("INSERT INTO PARKING_SESSIONS (session_id,student_id,car_id,maneuver_type,is_exam_mode) "
-              "VALUES (seq_parking_session_id.NEXTVAL,?,?,?,?)");
-    q.addBindValue(eleveId); q.addBindValue(vehiculeId);
-    q.addBindValue(manoeuvreType); q.addBindValue(modeExamen ? 1 : 0);
+    // Include session_start explicitly in case the column has no DEFAULT in this schema
+    q.prepare("INSERT INTO PARKING_SESSIONS "
+              "(session_id, student_id, car_id, maneuver_type, is_exam_mode, session_start) "
+              "VALUES (seq_parking_session_id.NEXTVAL, ?, ?, ?, ?, SYSTIMESTAMP)");
+    q.addBindValue(eleveId);
+    q.addBindValue(vehiculeId);
+    q.addBindValue(manoeuvreType);
+    q.addBindValue(modeExamen ? 1 : 0);
     if (q.exec()) {
         QSqlQuery idQ("SELECT seq_parking_session_id.CURRVAL FROM DUAL", m_db);
-        if (idQ.next()) return idQ.value(0).toInt();
+        if (idQ.next()) {
+            int newId = idQ.value(0).toInt();
+            qDebug() << "[DB] startSession OK → session_id=" << newId
+                     << " student=" << eleveId << " maneuver=" << manoeuvreType;
+            return newId;
+        }
     }
+    qDebug() << "[DB] startSession FAILED:" << q.lastError().text()
+             << " (student=" << eleveId << " car=" << vehiculeId
+             << " maneuver=" << manoeuvreType << ")";
     return -1;
 }
 
 void ParkingDBManager::endSession(int sessionId, bool reussi, int duree, int etapes,
                                   int erreurs, int calages, bool contactObstacle)
 {
-    if (!isConnected()) return;
+    if (!isConnected()) { qDebug() << "[DB] endSession: not connected"; return; }
+    if (sessionId <= 0) { qDebug() << "[DB] endSession: invalid sessionId=" << sessionId; return; }
     QSqlQuery q(m_db);
     q.prepare("UPDATE PARKING_SESSIONS SET session_end=SYSTIMESTAMP, is_successful=?, duration_seconds=?,"
               "steps_completed=?, error_count=?, stall_count=?, obstacle_contact=? "
@@ -788,7 +802,11 @@ void ParkingDBManager::endSession(int sessionId, bool reussi, int duree, int eta
     q.addBindValue(etapes); q.addBindValue(erreurs);
     q.addBindValue(calages); q.addBindValue(contactObstacle ? 1 : 0);
     q.addBindValue(sessionId);
-    q.exec();
+    if (q.exec())
+        qDebug() << "[DB] endSession OK → session_id=" << sessionId
+                 << " success=" << reussi << " rows=" << q.numRowsAffected();
+    else
+        qDebug() << "[DB] endSession FAILED:" << q.lastError().text();
 }
 
 bool ParkingDBManager::deleteSession(int sessionId)
@@ -829,42 +847,68 @@ QList<QVariantMap> ParkingDBManager::getSessionsEleve(int eleveId, int limit)
 {
     QList<QVariantMap> list;
     if (!isConnected()) return list;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS (joined to CARS) and legacy SESSIONS
-    // Column aliases must match what callers expect: reussi, nb_erreurs, nb_calages, manoeuvre_type, date_debut, duree_secondes
-    q.prepare("SELECT * FROM ("
-              "SELECT s.session_id AS id, s.student_id AS eleve_id, s.car_id AS vehicule_id, "
-              "s.maneuver_type AS manoeuvre_type, CAST(s.session_start AS DATE) AS date_debut, "
-              "CAST(s.session_end AS DATE) AS date_fin, s.duration_seconds AS duree_secondes, "
-              "s.is_exam_mode AS mode_examen, s.is_successful AS reussi, "
-              "s.steps_completed AS nb_etapes_completees, s.error_count AS nb_erreurs, "
-              "s.stall_count AS nb_calages, s.obstacle_contact AS contact_obstacle, "
-              "NVL(c.brand,' ') || ' ' || NVL(c.model,' ') AS modele, c.plate_number AS immatriculation "
-              "FROM PARKING_SESSIONS s JOIN CARS c ON s.car_id=c.id WHERE s.student_id=:id1 "
-              "UNION ALL "
-              "SELECT s2.ID AS id, s2.ELEVE_ID AS eleve_id, s2.VEHICULE_ID AS vehicule_id, "
-              "s2.MANOEUVRE_TYPE AS manoeuvre_type, s2.DATE_DEBUT AS date_debut, "
-              "s2.DATE_FIN AS date_fin, s2.DUREE_SECONDES AS duree_secondes, "
-              "s2.MODE_EXAMEN AS mode_examen, s2.REUSSI AS reussi, "
-              "s2.NB_ETAPES_COMPLETEES AS nb_etapes_completees, s2.NB_ERREURS AS nb_erreurs, "
-              "s2.NB_CALAGES AS nb_calages, s2.CONTACT_OBSTACLE AS contact_obstacle, "
-              "NVL(v.brand,' ') || ' ' || NVL(v.model,' ') AS modele, NVL(v.plate_number,' ') AS immatriculation "
-              "FROM SESSIONS s2 LEFT JOIN CARS v ON s2.VEHICULE_ID=v.ID WHERE s2.ELEVE_ID=:id2 "
-              "ORDER BY date_debut DESC"
-              ") WHERE ROWNUM <= :lim");
-    q.bindValue(":id1", eleveId);
-    q.bindValue(":id2", eleveId);
-    q.bindValue(":lim", limit);
-    if (q.exec()) {
-        while (q.next()) {
-            QVariantMap map;
-            for (int i = 0; i < q.record().count(); i++)
-                map[q.record().fieldName(i).toLower()] = q.value(i);
-            list.append(map);
+
+    // ── Primary: PARKING_SESSIONS (new table, always queried) ──────────────────
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT * FROM ("
+                  "SELECT s.session_id AS id, s.student_id AS eleve_id, s.car_id AS vehicule_id, "
+                  "s.maneuver_type AS manoeuvre_type, CAST(s.session_start AS DATE) AS date_debut, "
+                  "CAST(s.session_end AS DATE) AS date_fin, s.duration_seconds AS duree_secondes, "
+                  "s.is_exam_mode AS mode_examen, s.is_successful AS reussi, "
+                  "s.steps_completed AS nb_etapes_completees, s.error_count AS nb_erreurs, "
+                  "s.stall_count AS nb_calages, s.obstacle_contact AS contact_obstacle, "
+                  "NVL(c.brand,' ') || ' ' || NVL(c.model,' ') AS modele, "
+                  "NVL(c.plate_number,' ') AS immatriculation "
+                  "FROM PARKING_SESSIONS s LEFT JOIN CARS c ON s.car_id=c.id "
+                  "WHERE s.student_id=:id "
+                  "ORDER BY s.session_start DESC"
+                  ") WHERE ROWNUM <= :lim");
+        q.bindValue(":id",  eleveId);
+        q.bindValue(":lim", limit);
+        if (q.exec()) {
+            while (q.next()) {
+                QVariantMap map;
+                for (int i = 0; i < q.record().count(); i++)
+                    map[q.record().fieldName(i).toLower()] = q.value(i);
+                list.append(map);
+            }
+            qDebug() << "[DB] getSessionsEleve(PARKING_SESSIONS): " << list.size()
+                     << " rows for student=" << eleveId;
+        } else {
+            qDebug() << "[DB] getSessionsEleve(PARKING_SESSIONS) FAILED:" << q.lastError().text();
         }
-    } else {
-        qDebug() << "[DB] getSessionsEleve failed:" << q.lastError().text();
     }
+
+    // ── Fallback: legacy SESSIONS table (silently skipped if columns don't exist) ──
+    if (list.size() < limit) {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT * FROM ("
+                   "SELECT s2.ID AS id, s2.ELEVE_ID AS eleve_id, s2.VEHICULE_ID AS vehicule_id, "
+                   "s2.MANOEUVRE_TYPE AS manoeuvre_type, s2.DATE_DEBUT AS date_debut, "
+                   "s2.DATE_FIN AS date_fin, s2.DUREE_SECONDES AS duree_secondes, "
+                   "s2.MODE_EXAMEN AS mode_examen, s2.REUSSI AS reussi, "
+                   "s2.NB_ETAPES_COMPLETEES AS nb_etapes_completees, s2.NB_ERREURS AS nb_erreurs, "
+                   "s2.NB_CALAGES AS nb_calages, s2.CONTACT_OBSTACLE AS contact_obstacle, "
+                   "NVL(v.brand,' ') || ' ' || NVL(v.model,' ') AS modele, "
+                   "NVL(v.plate_number,' ') AS immatriculation "
+                   "FROM SESSIONS s2 LEFT JOIN CARS v ON s2.VEHICULE_ID=v.ID "
+                   "WHERE s2.ELEVE_ID=:id "
+                   "ORDER BY s2.DATE_DEBUT DESC"
+                   ") WHERE ROWNUM <= :lim");
+        q2.bindValue(":id",  eleveId);
+        q2.bindValue(":lim", limit - list.size());
+        if (q2.exec()) {
+            while (q2.next()) {
+                QVariantMap map;
+                for (int i = 0; i < q2.record().count(); i++)
+                    map[q2.record().fieldName(i).toLower()] = q2.value(i);
+                list.append(map);
+            }
+        }
+        // Silently ignore errors from legacy SESSIONS (table may not have all columns)
+    }
+
     return list;
 }
 
@@ -1066,35 +1110,45 @@ QVariantMap ParkingDBManager::getStatistiquesEleve(int eleveId)
 int ParkingDBManager::getSessionCount(int eleveId)
 {
     if (!isConnected()) return 0;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS and legacy SESSIONS so Smart Coach shows all data
-    q.prepare("SELECT COUNT(*) FROM ("
-              "SELECT session_id FROM PARKING_SESSIONS WHERE student_id=:id1 "
-              "UNION ALL "
-              "SELECT ID FROM SESSIONS WHERE ELEVE_ID=:id2"
-              ")");
-    q.bindValue(":id1", eleveId);
-    q.bindValue(":id2", eleveId);
-    if (q.exec() && q.next()) return q.value(0).toInt();
-    qDebug() << "[DB] getSessionCount failed:" << q.lastError().text();
-    return 0;
+    int total = 0;
+    // Primary: PARKING_SESSIONS
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT COUNT(*) FROM PARKING_SESSIONS WHERE student_id=:id");
+        q.bindValue(":id", eleveId);
+        if (q.exec() && q.next()) total += q.value(0).toInt();
+        else qDebug() << "[DB] getSessionCount(PARKING_SESSIONS) failed:" << q.lastError().text();
+    }
+    // Fallback: legacy SESSIONS (silently skip on error)
+    {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT COUNT(*) FROM SESSIONS WHERE ELEVE_ID=:id");
+        q2.bindValue(":id", eleveId);
+        if (q2.exec() && q2.next()) total += q2.value(0).toInt();
+    }
+    return total;
 }
 
 int ParkingDBManager::getSuccessCount(int eleveId)
 {
     if (!isConnected()) return 0;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS and legacy SESSIONS
-    q.prepare("SELECT COUNT(*) FROM ("
-              "SELECT session_id FROM PARKING_SESSIONS WHERE student_id=:id1 AND is_successful=1 "
-              "UNION ALL "
-              "SELECT ID FROM SESSIONS WHERE ELEVE_ID=:id2 AND REUSSI=1"
-              ")");
-    q.bindValue(":id1", eleveId);
-    q.bindValue(":id2", eleveId);
-    if (q.exec() && q.next()) return q.value(0).toInt();
-    qDebug() << "[DB] getSuccessCount failed:" << q.lastError().text();
-    return 0;
+    int total = 0;
+    // Primary: PARKING_SESSIONS
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT COUNT(*) FROM PARKING_SESSIONS WHERE student_id=:id AND is_successful=1");
+        q.bindValue(":id", eleveId);
+        if (q.exec() && q.next()) total += q.value(0).toInt();
+        else qDebug() << "[DB] getSuccessCount(PARKING_SESSIONS) failed:" << q.lastError().text();
+    }
+    // Fallback: legacy SESSIONS
+    {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT COUNT(*) FROM SESSIONS WHERE ELEVE_ID=:id AND REUSSI=1");
+        q2.bindValue(":id", eleveId);
+        if (q2.exec() && q2.next()) total += q2.value(0).toInt();
+    }
+    return total;
 }
 
 double ParkingDBManager::getTauxReussite(int eleveId)
@@ -1107,18 +1161,30 @@ double ParkingDBManager::getTauxReussite(int eleveId)
 int ParkingDBManager::getMeilleurTemps(int eleveId, const QString &manoeuvre)
 {
     if (!isConnected()) return -1;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS and legacy SESSIONS for best time
-    q.prepare("SELECT MIN(t) FROM ("
-              "SELECT duration_seconds AS t FROM PARKING_SESSIONS WHERE student_id=:id1 AND maneuver_type=:type1 AND is_successful=1 "
-              "UNION ALL "
-              "SELECT DUREE_SECONDES AS t FROM SESSIONS WHERE ELEVE_ID=:id2 AND MANOEUVRE_TYPE=:type2 AND REUSSI=1"
-              ")");
-    q.bindValue(":id1", eleveId); q.bindValue(":type1", manoeuvre);
-    q.bindValue(":id2", eleveId); q.bindValue(":type2", manoeuvre);
-    if (q.exec() && q.next() && !q.value(0).isNull()) return q.value(0).toInt();
-    if (q.lastError().isValid()) qDebug() << "[DB] getMeilleurTemps failed:" << q.lastError().text();
-    return -1;
+    int best = -1;
+    // Primary: PARKING_SESSIONS
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT MIN(duration_seconds) FROM PARKING_SESSIONS "
+                  "WHERE student_id=:id AND maneuver_type=:type AND is_successful=1");
+        q.bindValue(":id",   eleveId);
+        q.bindValue(":type", manoeuvre);
+        if (q.exec() && q.next() && !q.value(0).isNull()) best = q.value(0).toInt();
+        else if (q.lastError().isValid()) qDebug() << "[DB] getMeilleurTemps(PS) failed:" << q.lastError().text();
+    }
+    // Fallback: legacy SESSIONS
+    {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT MIN(DUREE_SECONDES) FROM SESSIONS "
+                   "WHERE ELEVE_ID=:id AND MANOEUVRE_TYPE=:type AND REUSSI=1");
+        q2.bindValue(":id",   eleveId);
+        q2.bindValue(":type", manoeuvre);
+        if (q2.exec() && q2.next() && !q2.value(0).isNull()) {
+            int t = q2.value(0).toInt();
+            if (best < 0 || t < best) best = t;
+        }
+    }
+    return best;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1139,10 +1205,11 @@ double ParkingDBManager::getTotalDepense(int eleveId)
 {
     if (!isConnected()) return 0.0;
     QSqlQuery q(m_db);
-    q.prepare("SELECT NVL(SUM(c.session_fee), 0) FROM PARKING_SESSIONS s "
-              "JOIN CARS c ON s.car_id = c.id "
-              "WHERE s.student_id=?");
-    q.addBindValue(eleveId);
+    // LEFT JOIN so sessions without a matching car still count (fee defaults to 0)
+    q.prepare("SELECT NVL(SUM(NVL(c.session_fee, 0)), 0) FROM PARKING_SESSIONS s "
+              "LEFT JOIN CARS c ON s.car_id = c.id "
+              "WHERE s.student_id=:id");
+    q.bindValue(":id", eleveId);
     if (q.exec() && q.next()) return q.value(0).toDouble();
     return 0.0;
 }
@@ -1154,39 +1221,47 @@ double ParkingDBManager::getTotalDepense(int eleveId)
 int ParkingDBManager::getTotalPracticeSeconds(int eleveId)
 {
     if (!isConnected()) return 0;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS and legacy SESSIONS for total practice time
-    q.prepare("SELECT NVL(SUM(t), 0) FROM ("
-              "SELECT NVL(duration_seconds, 0) AS t FROM PARKING_SESSIONS WHERE student_id=:id1 "
-              "UNION ALL "
-              "SELECT NVL(DUREE_SECONDES, 0) AS t FROM SESSIONS WHERE ELEVE_ID=:id2"
-              ")");
-    q.bindValue(":id1", eleveId);
-    q.bindValue(":id2", eleveId);
-    if (q.exec() && q.next()) return q.value(0).toInt();
-    qDebug() << "[DB] getTotalPracticeSeconds failed:" << q.lastError().text();
-    return 0;
+    int total = 0;
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT NVL(SUM(NVL(duration_seconds,0)),0) FROM PARKING_SESSIONS WHERE student_id=:id");
+        q.bindValue(":id", eleveId);
+        if (q.exec() && q.next()) total += q.value(0).toInt();
+        else qDebug() << "[DB] getTotalPracticeSeconds(PS) failed:" << q.lastError().text();
+    }
+    {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT NVL(SUM(NVL(DUREE_SECONDES,0)),0) FROM SESSIONS WHERE ELEVE_ID=:id");
+        q2.bindValue(":id", eleveId);
+        if (q2.exec() && q2.next()) total += q2.value(0).toInt();
+    }
+    return total;
 }
 
 int ParkingDBManager::getPerfectRunsCount(int eleveId, const QString &manoeuvreType)
 {
     if (!isConnected()) return 0;
-    QSqlQuery q(m_db);
-    // UNION both new PARKING_SESSIONS and legacy SESSIONS for perfect runs
-    q.prepare("SELECT COUNT(*) FROM ("
-              "SELECT session_id FROM PARKING_SESSIONS WHERE student_id=:id1 AND maneuver_type=:type1 "
-              "AND is_successful=1 AND error_count=0 AND stall_count=0 AND obstacle_contact=0 "
-              "UNION ALL "
-              "SELECT ID FROM SESSIONS WHERE ELEVE_ID=:id2 AND MANOEUVRE_TYPE=:type2 "
-              "AND REUSSI=1 AND NB_ERREURS=0 AND NB_CALAGES=0 AND CONTACT_OBSTACLE=0"
-              ")");
-    q.bindValue(":id1", eleveId);
-    q.bindValue(":type1", manoeuvreType);
-    q.bindValue(":id2", eleveId);
-    q.bindValue(":type2", manoeuvreType);
-    if (q.exec() && q.next()) return q.value(0).toInt();
-    qDebug() << "[DB] getPerfectRunsCount failed:" << q.lastError().text();
-    return 0;
+    int total = 0;
+    {
+        QSqlQuery q(m_db);
+        q.prepare("SELECT COUNT(*) FROM PARKING_SESSIONS "
+                  "WHERE student_id=:id AND maneuver_type=:type "
+                  "AND is_successful=1 AND error_count=0 AND stall_count=0 AND obstacle_contact=0");
+        q.bindValue(":id",   eleveId);
+        q.bindValue(":type", manoeuvreType);
+        if (q.exec() && q.next()) total += q.value(0).toInt();
+        else qDebug() << "[DB] getPerfectRunsCount(PS) failed:" << q.lastError().text();
+    }
+    {
+        QSqlQuery q2(m_db);
+        q2.prepare("SELECT COUNT(*) FROM SESSIONS "
+                   "WHERE ELEVE_ID=:id AND MANOEUVRE_TYPE=:type "
+                   "AND REUSSI=1 AND NB_ERREURS=0 AND NB_CALAGES=0 AND CONTACT_OBSTACLE=0");
+        q2.bindValue(":id",   eleveId);
+        q2.bindValue(":type", manoeuvreType);
+        if (q2.exec() && q2.next()) total += q2.value(0).toInt();
+    }
+    return total;
 }
 
 bool ParkingDBManager::isExamReady(int eleveId, const QStringList &manoeuvreTypes)

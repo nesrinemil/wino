@@ -22,7 +22,7 @@
 
 
 WinoInstructorDashboard::WinoInstructorDashboard(QWidget *parent) :
-    QMainWindow(parent)
+    QWidget(parent)
 {
     currentWeekStart = QDate::currentDate();
     // Align to Monday
@@ -47,16 +47,18 @@ WinoInstructorDashboard::~WinoInstructorDashboard()
 
 void WinoInstructorDashboard::setupUI()
 {
-    setWindowTitle("WINO - Instructor Dashboard");
-    setMinimumSize(1400, 900);
-    
     // Connect to theme manager
     ThemeManager* theme = ThemeManager::instance();
     bool isDark = theme->currentTheme() == ThemeManager::Dark;
     connect(theme, &ThemeManager::themeChanged, this, &WinoInstructorDashboard::onThemeChanged);
-    
+
     centralWidget = new QWidget(this);
-    setCentralWidget(centralWidget);
+
+    // Embed as a plain widget (no separate window)
+    QVBoxLayout *rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
+    rootLayout->addWidget(centralWidget);
     
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -2714,7 +2716,7 @@ QWidget* WinoInstructorDashboard::createStudentsSection()
     }
 
     QHBoxLayout *headerLayout = new QHBoxLayout();
-    QLabel *titleLabel = new QLabel("👨‍🎓 My Students Overview");
+    QLabel *titleLabel = new QLabel("🚗 Étudiants — Phase Circuit");
     titleLabel->setStyleSheet(QString("QLabel { color: %1; font-size: 20px; font-weight: bold; }").arg(theme->primaryTextColor()));
     headerLayout->addWidget(titleLabel);
     headerLayout->addStretch();
@@ -2755,6 +2757,7 @@ QWidget* WinoInstructorDashboard::createStudentsSection()
         "LEFT JOIN WINO_PROGRESS up ON up.user_id = NVL(st.id, sm.id) "
         "WHERE sm.instructor_id = :inst_id "
         "  AND sm.status = 'approved' "
+        "  AND NVL(up.current_step, 1) = 2 "   // Circuit step only (1=Code, 2=Circuit, 3=Parking)
         "ORDER BY sm.id DESC");
     q.bindValue(":inst_id", instructorId);
 
@@ -2864,7 +2867,7 @@ QWidget* WinoInstructorDashboard::createStudentsSection()
     }
 
     if (!hasData) {
-        QLabel *empty = new QLabel("You do not have any students assigned to you yet.");
+        QLabel *empty = new QLabel("Aucun étudiant en phase circuit ne vous est actuellement assigné.");
         empty->setAlignment(Qt::AlignCenter);
         empty->setStyleSheet(QString("QLabel { color: %1; font-size: 15px; font-style: italic; margin-top: 30px; }").arg(theme->secondaryTextColor()));
         scrollLayout->addWidget(empty);
