@@ -391,6 +391,9 @@ private:
     int  m_pendingStep;
     bool m_maquetteConnected, m_simulationMode;
     QFrame *m_simButtonPanel;
+    QTimer *m_hc05RetryTimer = nullptr;   // auto-retry HC-05 if port locked
+    void startHc05Retry();
+    void stopHc05Retry();
 
     // ── LCD Arduino 2 (USB COM6) ──
     QSerialPort *m_lcdPort   = nullptr;

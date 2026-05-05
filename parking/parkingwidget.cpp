@@ -5396,24 +5396,51 @@ void ParkingWidget::connectSensorSignals()
 void ParkingWidget::connectMaquette()
 {
     // ── HC-05 is always on COM3 (Bluetooth SPP) ──
-    // COM6 = LCD Arduino (USB) — NEVER connect HC-05 there.
+    // COM6 = LCD Arduino (USB) — NEVER use for HC-05.
     const QString HC05_PORT = "COM3";
 
     qDebug() << "[HC-05] Connecting to" << HC05_PORT;
     bool ok = m_sensorMgr->connectToPort(HC05_PORT);
     if (ok) {
         m_maquetteConnected = true;
+        stopHc05Retry();          // stop auto-retry — we're connected
         onConnectionChanged(true);
     } else {
-        m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 Failed"));
-        m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
+        // Port busy (Arduino IDE open?) — show status and auto-retry every 5s
+        m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x94\x84 Retrying COM3..."));
+        m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#fdcb6e;background:#fff9e6;"
             "border-radius:8px;padding:3px 8px;border:none;}");
-        showFloatingMessage(
-            QString::fromUtf8("\xf0\x9f\x94\xb4 HC-05 not found on COM3"), "#e17055");
+        startHc05Retry();
     }
 
     // Always retry LCD port on Connect click (in case COM6 wasn't available at startup)
     retryLcdConnect();
+}
+
+void ParkingWidget::startHc05Retry()
+{
+    if (!m_hc05RetryTimer) {
+        m_hc05RetryTimer = new QTimer(this);
+        m_hc05RetryTimer->setInterval(5000);   // try every 5 seconds
+        connect(m_hc05RetryTimer, &QTimer::timeout, this, [this]{
+            if (m_maquetteConnected) { stopHc05Retry(); return; }
+            qDebug() << "[HC-05] Auto-retry COM3...";
+            bool ok = m_sensorMgr->connectToPort("COM3");
+            if (ok) {
+                m_maquetteConnected = true;
+                stopHc05Retry();
+                onConnectionChanged(true);
+            }
+            // else: stay in retry loop silently (error suppressed by 3s dedup in SensorManager)
+        });
+    }
+    if (!m_hc05RetryTimer->isActive()) m_hc05RetryTimer->start();
+}
+
+void ParkingWidget::stopHc05Retry()
+{
+    if (m_hc05RetryTimer && m_hc05RetryTimer->isActive())
+        m_hc05RetryTimer->stop();
 }
 
 void ParkingWidget::onConnectionChanged(bool connected)
