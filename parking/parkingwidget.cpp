@@ -1387,6 +1387,9 @@ ParkingWidget::ParkingWidget(const QString &userName, const QString &userRole,
     applyTheme();
     connect(ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &ParkingWidget::applyTheme);
+
+    // Auto-detect LCD Arduino 2 on COM6 after short delay (port scan at startup)
+    QTimer::singleShot(600, this, [this]{ connectLcdPort(); });
 }
 
 ParkingWidget::~ParkingWidget()
@@ -2797,6 +2800,21 @@ QWidget* ParkingWidget::createSessionPage()
     m_stepDiagram->setMinimumHeight(180);
     stL->addWidget(m_stepDiagram);
 
+    // ── Arduino HC-05 messages (below the 3D car view) ───────────────────────
+    m_sessionArduinoLog = new QTextEdit(stepCard);
+    m_sessionArduinoLog->setReadOnly(true);
+    m_sessionArduinoLog->setFixedHeight(160);
+    m_sessionArduinoLog->setStyleSheet(
+        "QTextEdit{background:#0f1117;color:#dfe6e9;border:none;"
+        "border-radius:10px;padding:10px;font-family:'Courier New';font-size:11px;"
+        "border-top:2px solid rgba(108,92,231,0.3);}"
+        "QScrollBar:vertical{background:rgba(255,255,255,0.04);width:5px;border-radius:3px;}"
+        "QScrollBar::handle:vertical{background:rgba(108,92,231,0.4);border-radius:3px;}");
+    m_sessionArduinoLog->setPlaceholderText(
+        QString::fromUtf8("\xf0\x9f\x93\xa1  En attente de connexion HC-05...\n"
+                          "Cliquez 'Connect Model' ci-dessous pour recevoir les messages."));
+    stL->addWidget(m_sessionArduinoLog);
+
     // Tip
     m_stepTip = new QLabel("", stepCard);
     m_stepTip->setWordWrap(true);
@@ -3541,15 +3559,100 @@ QWidget* ParkingWidget::createCarDiagram()
 
     l->addWidget(m_simButtonPanel);
 
-    // Connect button
+    // Connect button — connects both sensor maquette AND Arduino HC-05 serial
     QPushButton *conn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x8c  Connect Model"), card);
     conn->setCursor(Qt::PointingHandCursor);
-    conn->setFixedHeight(32);
-    conn->setStyleSheet("QPushButton{background:#0984e3;color:white;border:none;border-radius:10px;"
-        "padding:0 14px;font-size:11px;font-weight:bold;}"
+    conn->setFixedHeight(36);
+    conn->setStyleSheet(
+        "QPushButton{background:#0984e3;color:white;border:none;border-radius:10px;"
+        "padding:0 14px;font-size:12px;font-weight:bold;}"
         "QPushButton:hover{background:#0870c0;}");
-    connect(conn, &QPushButton::clicked, this, &ParkingWidget::connectMaquette);
-    l->addWidget(conn);
+    connect(conn, &QPushButton::clicked, this, [this, conn]() {
+        // 1. Sensor maquette connection (existing behaviour)
+        connectMaquette();
+
+        // 2. HC-05 Arduino serial — only if not already open
+        if (!m_arduinoSerial || !m_arduinoSerial->isOpen()) {
+            if (!m_arduinoSerial) {
+                m_arduinoSerial = new QSerialPort(this);
+                connect(m_arduinoSerial, &QSerialPort::readyRead,
+                        this, &ParkingWidget::onArduinoDataReady);
+            }
+            // Prefer the port chosen on the Full ATTT card; fall back to first available
+            QString port = (m_btPortCombo && m_btPortCombo->count() > 0)
+                               ? m_btPortCombo->currentText() : QString("COM3");
+            m_arduinoSerial->setPortName(port);
+            m_arduinoSerial->setBaudRate(QSerialPort::Baud9600);
+            m_arduinoSerial->setDataBits(QSerialPort::Data8);
+            m_arduinoSerial->setParity(QSerialPort::NoParity);
+            m_arduinoSerial->setStopBits(QSerialPort::OneStop);
+            m_arduinoSerial->setFlowControl(QSerialPort::NoFlowControl);
+
+            if (m_arduinoSerial->open(QIODevice::ReadOnly)) {
+                // Update Full ATTT card status labels
+                if (m_btStatusLbl) {
+                    m_btStatusLbl->setText(
+                        QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
+                    m_btStatusLbl->setStyleSheet(
+                        "font-size:11px;color:#55efc4;background:transparent;");
+                }
+                if (m_btConnectBtn) {
+                    m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x98  D\xc3\xa9connecter"));
+                    m_btConnectBtn->setStyleSheet(
+                        "QPushButton{background:#e17055;color:white;border:none;border-radius:8px;"
+                        "font-size:12px;font-weight:bold;padding:0 14px;}"
+                        "QPushButton:hover{background:#d05f3f;}");
+                }
+                // Notify in the session log
+                if (m_sessionArduinoLog)
+                    m_sessionArduinoLog->append(QString::fromUtf8(
+                        "<span style='color:#55efc4;font-weight:bold;'>&#9679; HC-05 connect\xc3\xa9 sur ")
+                        + port + "</span>");
+                // Change button to green "Connected"
+                conn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Disconnect"));
+                conn->setStyleSheet(
+                    "QPushButton{background:#e17055;color:white;border:none;border-radius:10px;"
+                    "padding:0 14px;font-size:12px;font-weight:bold;}"
+                    "QPushButton:hover{background:#d05f3f;}");
+            } else {
+                if (m_sessionArduinoLog)
+                    m_sessionArduinoLog->append(QString::fromUtf8(
+                        "<span style='color:#ff7675;'>&#9888; HC-05 erreur: ")
+                        + m_arduinoSerial->errorString() + "</span>");
+            }
+        } else {
+            // Already connected — disconnect HC-05
+            m_arduinoSerial->close();
+            if (m_btStatusLbl) {
+                m_btStatusLbl->setText(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
+                m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
+            }
+            if (m_btConnectBtn) {
+                m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
+                m_btConnectBtn->setStyleSheet(
+                    "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
+                    "font-size:12px;font-weight:bold;padding:0 14px;}"
+                    "QPushButton:hover{background:#00a381;}");
+            }
+            conn->setText(QString::fromUtf8("\xf0\x9f\x94\x8c  Connect Model"));
+            conn->setStyleSheet(
+                "QPushButton{background:#0984e3;color:white;border:none;border-radius:10px;"
+                "padding:0 14px;font-size:12px;font-weight:bold;}"
+                "QPushButton:hover{background:#0870c0;}");
+        }
+    });
+
+    // LCD status badge (next to Connect button)
+    {
+        QHBoxLayout *btnRow = new QHBoxLayout();
+        btnRow->addWidget(conn, 1);
+        m_lcdStatus = new QLabel(QString::fromUtf8("\xf0\x9f\x94\xb4 LCD"), card);
+        m_lcdStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
+            "border-radius:8px;padding:3px 8px;border:none;}");
+        m_lcdStatus->setToolTip("LCD Arduino 2 (COM6)");
+        btnRow->addWidget(m_lcdStatus);
+        l->addLayout(btnRow);
+    }
 
     return card;
 }
@@ -3833,6 +3936,8 @@ void ParkingWidget::showChecklistThenStart()
 void ParkingWidget::startSession()
 {
     m_sessionActive = true;
+    m_sessionEndHandled    = false;  // reset end-guard for new session
+    m_arduinoAdvancePending = false;  // ensure debounce is clear at session start
     m_sessionSeconds = 0;
     m_currentStep = 0;
     m_nbErrors = 0;
@@ -3863,18 +3968,54 @@ void ParkingWidget::startSession()
         startRealExam();
     }
 
-    QString modeStr = m_freeTrainingMode ?
-        QString::fromUtf8("\xf0\x9f\x8e\xaf  Free mode \xe2\x80\x94 use the sensors !") :
-        QString::fromUtf8("\xf0\x9f\x9f\xa2  Let's go! Follow the steps.");
+    // Guidance message: for PREP step → "Manual check" hint; otherwise "Let's go"
+    bool isFirstStepPrep = (!m_allManeuvers.isEmpty() &&
+                            m_currentManeuver < m_allManeuvers.size() &&
+                            !m_allManeuvers[m_currentManeuver].isEmpty() &&
+                            m_allManeuvers[m_currentManeuver][m_currentStep].sensorPhase == "PREP");
+    QString modeStr;
+    if (m_freeTrainingMode) {
+        modeStr = QString::fromUtf8("\xf0\x9f\x8e\xaf  Free mode \xe2\x80\x94 use the sensors !");
+    } else if (isFirstStepPrep) {
+        modeStr = QString::fromUtf8(
+            "\xe2\x9c\x8b  \xc3\x89tape manuelle \xe2\x80\x94 "
+            "v\xc3\xa9rifications, puis appuyez sur Next  \xe2\x96\xb6");
+    } else {
+        modeStr = QString::fromUtf8("\xf0\x9f\x9f\xa2  Let's go! Follow the steps.");
+    }
     m_guidanceMsg->setText(modeStr);
-    m_guidanceMsg->setStyleSheet("QLabel{font-size:12px;color:#00b894;font-weight:bold;"
-        "background:#e8f8f5;border-radius:10px;padding:10px 14px;border:none;}");
+    m_guidanceMsg->setStyleSheet(isFirstStepPrep
+        ? "QLabel{font-size:12px;color:#0984e3;font-weight:bold;"
+          "background:#e8f4fd;border-radius:10px;padding:10px 14px;border:none;}"
+        : "QLabel{font-size:12px;color:#00b894;font-weight:bold;"
+          "background:#e8f8f5;border-radius:10px;padding:10px 14px;border:none;}");
     m_guidanceMsg->setVisible(true);
 
     showFloatingMessage(QString::fromUtf8("\xf0\x9f\x9a\x80 Session started!"), "#00b894");
 
+    // Show Arduino status hint in session log (clear first — avoid accumulating across sessions)
+    if (m_sessionArduinoLog) {
+        m_sessionArduinoLog->clear();
+        bool connected = m_arduinoSerial && m_arduinoSerial->isOpen();
+        QString hint = connected
+            ? QString::fromUtf8("<span style='color:#55efc4;font-weight:bold;'>"
+                                "\xf0\x9f\x93\xa1 HC-05 connect\xc3\xa9 \xe2\x80\x94 "
+                                "auto-avance sur\xc2\xa0: "
+                                "STEP 1 \xe2\x86\x92 !! STOP !! \xe2\x86\x92 GO STRAIGHT "
+                                "\xe2\x86\x92 EXTREMITY REACHED \xe2\x86\x92 POSITION OK "
+                                "\xe2\x86\x92 PARKING COMPLETE</span>")
+            : QString::fromUtf8("<span style='color:#fdcb6e;'>"
+                                "\xe2\x9a\xa0 HC-05 non connect\xc3\xa9 \xe2\x80\x94 "
+                                "cliquez Connect Model pour activer l'auto-avance.</span>");
+        m_sessionArduinoLog->append(hint);
+    }
+
     // Reposition notes FAB
     repositionNotesBubble();
+
+    // LCD Arduino 2 — start timer display
+    sendToLcd("START");
+    sendToLcd(QString("S:1/%1").arg(m_totalSteps));
 
     // Voice: announce session start + first step
     QString manName = m_maneuverNames[m_currentManeuver];
@@ -3889,6 +4030,7 @@ void ParkingWidget::startSession()
 void ParkingWidget::advanceStep()
 {
     if(!m_sessionActive) return;
+    m_arduinoAdvancePending = false;  // reset debounce so next phase transition can trigger
     m_currentStep++;
     if(m_currentStep >= m_totalSteps){
         endSession();
@@ -3897,15 +4039,24 @@ void ParkingWidget::advanceStep()
     updateStepUI();
     updateDots();
     updateCommonMistakes();
+
+    // Always (re-)show navigation buttons after every advance
     m_prevBtn->setVisible(m_currentStep > 0);
-    m_guidanceMsg->setText(QString::fromUtf8(
-        "\xe2\x9c\x85 Step validated!"));
-    m_guidanceMsg->setStyleSheet("QLabel{font-size:12px;color:#00b894;font-weight:bold;"
-        "background:#e8f8f5;border-radius:10px;padding:10px 14px;border:none;}");
-    m_guidanceMsg->setVisible(true);
+    m_nextBtn->setVisible(!m_freeTrainingMode);   // ← was missing: Next disappeared after auto-advance
+    m_endBtn->setVisible(true);                   // ← was missing: Finish disappeared after auto-advance
+
+    // Guidance is already set correctly by updateStepUI() for every phase:
+    //   PREP  → "✋ Étape manuelle — press Next"
+    //   DONE  → "✅ Dernière étape — press Complete"
+    //   other → "🟢 En cours — avancement automatique via Arduino / capteurs"
+    // The floating "Step X/Y" banner already confirms the advance; no need to override.
+    // (Overriding with "✅ Step validated!" here was confusing MIDWAY / DRIVE steps.)
 
     showFloatingMessage(QString::fromUtf8("Step %1/%2")
         .arg(m_currentStep+1).arg(m_totalSteps), "#00b894");
+
+    // LCD Arduino 2 — update step indicator
+    sendToLcd(QString("S:%1/%2").arg(m_currentStep + 1).arg(m_totalSteps));
 
     // Voice: announce new step
     speakStep(m_currentStep);
@@ -3923,8 +4074,15 @@ void ParkingWidget::prevStep()
 
 void ParkingWidget::endSession()
 {
+    // Idempotency guard — prevents double DB save if sensor/Arduino AND button both fire
+    if (m_sessionEndHandled) return;
+    m_sessionEndHandled = true;
     m_sessionActive = false;
+    m_arduinoAdvancePending = false;  // reset debounce
     m_sessionTimer->stop();
+
+    // LCD Arduino 2 — show PARKING COMPLETE
+    sendToLcd("DONE");
     // Save notes on session end
     if(m_notesAutoSave && m_notesAutoSave->isActive()) { m_notesAutoSave->stop(); saveQuickNote(); }
     bool success = (m_currentStep >= m_totalSteps) && !m_contactObstacle && m_nbCalages < 2;
@@ -4333,9 +4491,146 @@ QWidget* ParkingWidget::createFullExamCard()
     btnRow->addWidget(m_fullExamStartBtn);
     l->addLayout(btnRow);
 
-    // Initial state: locked (will be updated by updateFullExamCard() after construction)
-    m_fullExamStartBtn->setVisible(false);
-    m_fullExamLockLabel->setVisible(true);
+    // Always unlocked — exam accessible without booking requirement
+    m_fullExamStartBtn->setVisible(true);
+    m_fullExamLockLabel->setVisible(false);
+
+    // ── Arduino HC-05 Bluetooth Monitor ─────────────────────────────────────
+    QFrame *btPanel = new QFrame(card);
+    btPanel->setStyleSheet(
+        "QFrame{background:rgba(0,0,0,0.22);border-radius:14px;border:none;}");
+    QVBoxLayout *btL = new QVBoxLayout(btPanel);
+    btL->setContentsMargins(14, 12, 14, 12);
+    btL->setSpacing(8);
+
+    // Title row
+    QHBoxLayout *btTitleRow = new QHBoxLayout();
+    QLabel *btIcon = new QLabel(QString::fromUtf8("\xf0\x9f\x93\xa1"));
+    btIcon->setStyleSheet("font-size:18px;background:transparent;");
+    QLabel *btTitle = new QLabel("Arduino HC-05 Monitor");
+    btTitle->setStyleSheet("font-size:13px;font-weight:bold;color:white;background:transparent;");
+    m_btStatusLbl = new QLabel(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
+    m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
+    btTitleRow->addWidget(btIcon);
+    btTitleRow->addWidget(btTitle);
+    btTitleRow->addStretch();
+    btTitleRow->addWidget(m_btStatusLbl);
+    btL->addLayout(btTitleRow);
+
+    // Port selector + connect button row
+    QHBoxLayout *btCtrlRow = new QHBoxLayout();
+    btCtrlRow->setSpacing(8);
+
+    m_btPortCombo = new QComboBox();
+    m_btPortCombo->setFixedHeight(32);
+    m_btPortCombo->setStyleSheet(
+        "QComboBox{background:rgba(255,255,255,0.15);color:white;border:1px solid rgba(255,255,255,0.3);"
+        "border-radius:8px;padding:4px 10px;font-size:12px;}"
+        "QComboBox::drop-down{border:none;}"
+        "QComboBox QAbstractItemView{background:#2d3436;color:white;}");
+    // Populate available ports
+    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+        m_btPortCombo->addItem(info.portName());
+    if (m_btPortCombo->count() == 0)
+        m_btPortCombo->addItem("COM3");
+
+    QPushButton *refreshBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x84"));
+    refreshBtn->setFixedSize(32, 32);
+    refreshBtn->setToolTip("Refresh ports");
+    refreshBtn->setStyleSheet(
+        "QPushButton{background:rgba(255,255,255,0.15);color:white;border:none;"
+        "border-radius:8px;font-size:14px;}"
+        "QPushButton:hover{background:rgba(255,255,255,0.25);}");
+    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
+        m_btPortCombo->clear();
+        for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
+            m_btPortCombo->addItem(info.portName());
+        if (m_btPortCombo->count() == 0) m_btPortCombo->addItem("COM3");
+    });
+
+    m_btConnectBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
+    m_btConnectBtn->setFixedHeight(32);
+    m_btConnectBtn->setCursor(Qt::PointingHandCursor);
+    m_btConnectBtn->setStyleSheet(
+        "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
+        "font-size:12px;font-weight:bold;padding:0 14px;}"
+        "QPushButton:hover{background:#00a381;}");
+    connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
+        if (m_arduinoSerial && m_arduinoSerial->isOpen()) {
+            // Disconnect
+            m_arduinoSerial->close();
+            m_btStatusLbl->setText(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
+            m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
+            m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
+            m_btConnectBtn->setStyleSheet(
+                "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
+                "font-size:12px;font-weight:bold;padding:0 14px;}"
+                "QPushButton:hover{background:#00a381;}");
+            if (m_arduinoLog)
+                m_arduinoLog->append(QString::fromUtf8(
+                    "<span style='color:#ff7675;'>&#9679; D\xc3\xa9connect\xc3\xa9</span>"));
+            // Mirror state to session page panel
+            syncSessionBtUI();
+        } else {
+            // Connect
+            if (!m_arduinoSerial) {
+                m_arduinoSerial = new QSerialPort(this);
+                connect(m_arduinoSerial, &QSerialPort::readyRead,
+                        this, &ParkingWidget::onArduinoDataReady);
+            }
+            QString port = m_btPortCombo->currentText();
+            m_arduinoSerial->setPortName(port);
+            m_arduinoSerial->setBaudRate(QSerialPort::Baud9600);
+            m_arduinoSerial->setDataBits(QSerialPort::Data8);
+            m_arduinoSerial->setParity(QSerialPort::NoParity);
+            m_arduinoSerial->setStopBits(QSerialPort::OneStop);
+            m_arduinoSerial->setFlowControl(QSerialPort::NoFlowControl);
+
+            if (m_arduinoSerial->open(QIODevice::ReadOnly)) {
+                m_btStatusLbl->setText(
+                    QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
+                m_btStatusLbl->setStyleSheet(
+                    "font-size:11px;color:#55efc4;background:transparent;");
+                m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x98  D\xc3\xa9connecter"));
+                m_btConnectBtn->setStyleSheet(
+                    "QPushButton{background:#e17055;color:white;border:none;border-radius:8px;"
+                    "font-size:12px;font-weight:bold;padding:0 14px;}"
+                    "QPushButton:hover{background:#d05f3f;}");
+                if (m_arduinoLog)
+                    m_arduinoLog->append(QString::fromUtf8(
+                        "<span style='color:#55efc4;'>&#9679; Connect\xc3\xa9 sur ")
+                        + port + "</span>");
+                // Mirror state to session page panel
+                syncSessionBtUI();
+            } else {
+                m_btStatusLbl->setText(QString::fromUtf8("\xe2\x9c\x96  Erreur: ")
+                    + m_arduinoSerial->errorString());
+                m_btStatusLbl->setStyleSheet(
+                    "font-size:11px;color:#ff7675;background:transparent;");
+            }
+        }
+    });
+
+    btCtrlRow->addWidget(m_btPortCombo, 1);
+    btCtrlRow->addWidget(refreshBtn);
+    btCtrlRow->addWidget(m_btConnectBtn);
+    btL->addLayout(btCtrlRow);
+
+    // Message log
+    m_arduinoLog = new QTextEdit();
+    m_arduinoLog->setReadOnly(true);
+    m_arduinoLog->setFixedHeight(180);
+    m_arduinoLog->setStyleSheet(
+        "QTextEdit{background:rgba(0,0,0,0.35);color:#dfe6e9;border:none;"
+        "border-radius:10px;padding:8px;font-family:'Courier New';font-size:11px;}"
+        "QScrollBar:vertical{background:rgba(255,255,255,0.05);width:6px;border-radius:3px;}"
+        "QScrollBar::handle:vertical{background:rgba(255,255,255,0.2);border-radius:3px;}");
+    m_arduinoLog->setPlaceholderText(
+        QString::fromUtf8("En attente de connexion HC-05...\n"
+                          "S\xc3\xa9lectionnez le port COM et cliquez Connecter."));
+    btL->addWidget(m_arduinoLog);
+
+    l->addWidget(btPanel);
 
     return card;
 }
@@ -4859,6 +5154,39 @@ void ParkingWidget::updateStepUI()
     if (m_stepDiagram)
         m_stepDiagram->setStep(m_currentManeuver, m_currentStep, m_totalSteps);
 
+    // ── Update guidance message based on step phase ──────────────────────────
+    if (m_guidanceMsg && m_sessionActive) {
+        const QString &phase = step.sensorPhase;
+        if (phase == "PREP") {
+            // Manual step — no sensor trigger. Tell user to press Next when ready.
+            m_guidanceMsg->setText(QString::fromUtf8(
+                "\xe2\x9c\x8b  \xc3\x89tape manuelle \xe2\x80\x94 "
+                "effectuez les v\xc3\xa9rifications puis appuyez sur \xe2\x96\xb6 Next"));
+            m_guidanceMsg->setStyleSheet(
+                "QLabel{font-size:12px;color:#0984e3;font-weight:bold;"
+                "background:#e8f4fd;border-radius:10px;padding:10px 14px;border:none;}");
+            m_guidanceMsg->setVisible(true);
+        } else if (phase == "DONE") {
+            // Last step of the maneuver
+            m_guidanceMsg->setText(QString::fromUtf8(
+                "\xe2\x9c\x85  Derni\xc3\xa8re \xc3\xa9tape \xe2\x80\x94 "
+                "appuyez sur \xe2\x9c\x85 Complete pour terminer"));
+            m_guidanceMsg->setStyleSheet(
+                "QLabel{font-size:12px;color:#00b894;font-weight:bold;"
+                "background:#e8f8f5;border-radius:10px;padding:10px 14px;border:none;}");
+            m_guidanceMsg->setVisible(true);
+        } else {
+            // Sensor-driven step — Arduino or sensor will auto-advance
+            m_guidanceMsg->setText(QString::fromUtf8(
+                "\xf0\x9f\x9f\xa2  En cours \xe2\x80\x94 "
+                "avancement automatique via Arduino / capteurs"));
+            m_guidanceMsg->setStyleSheet(
+                "QLabel{font-size:12px;color:#00b894;font-weight:bold;"
+                "background:#e8f8f5;border-radius:10px;padding:10px 14px;border:none;}");
+            m_guidanceMsg->setVisible(true);
+        }
+    }
+
     // Reset DB message label for this new step
     if (m_dbMsgLabel) {
         m_dbMsgLabel->setVisible(false);
@@ -4866,6 +5194,32 @@ void ParkingWidget::updateStepUI()
             "QLabel{background:#fff3cd;color:#856404;font-size:12px;font-weight:bold;"
             "border-radius:10px;padding:10px 14px;"
             "border-left:4px solid #ffc107;border-top:none;border-right:none;border-bottom:none;}");
+    }
+
+    // ── On the LAST step: rewire Next → endSession() directly ──────────────
+    // This bypasses the m_sessionActive guard in advanceStep(), so the button
+    // always works even if a sensor/Arduino event already ended the session.
+    if (m_nextBtn) {
+        bool isLastStep = (m_currentStep == m_totalSteps - 1);
+        disconnect(m_nextBtn, &QPushButton::clicked, this, &ParkingWidget::advanceStep);
+        disconnect(m_nextBtn, &QPushButton::clicked, this, &ParkingWidget::endSession);
+        if (isLastStep) {
+            m_nextBtn->setText(QString::fromUtf8("\xe2\x9c\x85  Complete"));
+            m_nextBtn->setStyleSheet(
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                "stop:0 #00b894,stop:1 #27ae60);color:white;border:none;border-radius:12px;"
+                "padding:0 28px;font-size:13px;font-weight:bold;letter-spacing:0.5px;}"
+                "QPushButton:hover{background:#27ae60;}");
+            connect(m_nextBtn, &QPushButton::clicked, this, &ParkingWidget::endSession);
+        } else {
+            m_nextBtn->setText(QString::fromUtf8("Next  \xe2\x86\x92"));
+            m_nextBtn->setStyleSheet(
+                "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                "stop:0 #00b894,stop:1 #55efc4);color:white;border:none;border-radius:12px;"
+                "padding:0 28px;font-size:13px;font-weight:bold;letter-spacing:0.5px;}"
+                "QPushButton:hover{background:#009874;}");
+            connect(m_nextBtn, &QPushButton::clicked, this, &ParkingWidget::advanceStep);
+        }
     }
 
     // Reposition notes FAB
@@ -4925,7 +5279,11 @@ void ParkingWidget::updateSessionTimer()
 {
     m_sessionSeconds++;
     int mn = m_sessionSeconds / 60, sc = m_sessionSeconds % 60;
-    m_timerLabel->setText(QString("%1:%2").arg(mn,2,10,QChar('0')).arg(sc,2,10,QChar('0')));
+    QString timeStr = QString("%1:%2").arg(mn,2,10,QChar('0')).arg(sc,2,10,QChar('0'));
+    m_timerLabel->setText(timeStr);
+
+    // Mirror timer to LCD Arduino 2 every second
+    sendToLcd("T:" + timeStr);
 
     // Color timer based on duration
     if(m_sessionSeconds > 150 && m_examMode){
@@ -5037,22 +5395,25 @@ void ParkingWidget::connectSensorSignals()
 
 void ParkingWidget::connectMaquette()
 {
-    QStringList ports = SensorManager::availablePorts();
-    if(ports.isEmpty()){
-        m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 No port"));
-        m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
-            "border-radius:8px;padding:3px 8px;border:none;}");
-        return;
-    }
-    bool ok = m_sensorMgr->connectToPort(ports.first());
-    if(ok){
+    // ── HC-05 is always on COM3 (Bluetooth SPP) ──
+    // COM6 = LCD Arduino (USB) — NEVER connect HC-05 there.
+    const QString HC05_PORT = "COM3";
+
+    qDebug() << "[HC-05] Connecting to" << HC05_PORT;
+    bool ok = m_sensorMgr->connectToPort(HC05_PORT);
+    if (ok) {
         m_maquetteConnected = true;
         onConnectionChanged(true);
     } else {
         m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 Failed"));
         m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
             "border-radius:8px;padding:3px 8px;border:none;}");
+        showFloatingMessage(
+            QString::fromUtf8("\xf0\x9f\x94\xb4 HC-05 not found on COM3"), "#e17055");
     }
+
+    // Always retry LCD port on Connect click (in case COM6 wasn't available at startup)
+    retryLcdConnect();
 }
 
 void ParkingWidget::onConnectionChanged(bool connected)
@@ -5592,8 +5953,259 @@ void ParkingWidget::checkOracleExamBooking()
 void ParkingWidget::updateFullExamCard()
 {
     if (!m_fullExamStartBtn || !m_fullExamLockLabel) return;
-    m_fullExamStartBtn->setVisible(m_hasExamBookingToday);
-    m_fullExamLockLabel->setVisible(!m_hasExamBookingToday);
+    // Exam is always accessible — no booking required to start
+    m_fullExamStartBtn->setVisible(true);
+    m_fullExamLockLabel->setVisible(false);
+}
+
+// ─── Arduino HC-05 Bluetooth data handler ────────────────────────────────────
+void ParkingWidget::onArduinoDataReady()
+{
+    if (!m_arduinoSerial) return;
+    m_arduinoBuffer += QString::fromLatin1(m_arduinoSerial->readAll());
+
+    // Process complete lines
+    while (m_arduinoBuffer.contains('\n')) {
+        int idx = m_arduinoBuffer.indexOf('\n');
+        QString line = m_arduinoBuffer.left(idx).trimmed();
+        m_arduinoBuffer = m_arduinoBuffer.mid(idx + 1);
+        if (!line.isEmpty())
+            appendArduinoMessage(line);
+    }
+}
+
+void ParkingWidget::appendArduinoMessage(const QString &line)
+{
+    // ── Skip ══ separator lines ──────────────────────────────────────────────
+    if (line.startsWith(QString::fromUtf8("\xe2\x95\x90\xe2\x95\x90"))) return; // ══
+
+    QString lw  = line.toLower();
+    QString esc = line.toHtmlEscaped();
+    QString html;
+
+    // ── Color coding matched to Arduino state machine ────────────────────────
+    //
+    //  PARKED transition  ✅ PARKING COMPLETE!       → gold
+    //  REV_LEFT transition!! POSITION OK !!          → green (confirmed position)
+    //  REV_RIGHT          PHASE 5: REVERSE…          → purple
+    //  STEP3→REV_RIGHT    !! EXTREMITY REACHED !!    → red warning
+    //  STEP3 active       PHASE 4: REVERSE…          → orange
+    //  STEP2→STEP3        GO STRAIGHT / Watch right… → teal instruction
+    //  TURN_LEFT active   STEP 2: R:Xcm              → blue sensor
+    //  STEP3 active       STEP 3: Barrier 4 / STRAIGHT → blue
+    //  FORWARD active     STEP 1: MOVING FORWARD     → teal header
+    //  !! STOP !!         (barrier reached)          → red alert
+    //  >> REVERSE… <<     (sub-instruction)          → orange
+    //  TURN RIGHT…        (driver instruction)       → yellow
+    //  Waiting Xs / count (debug/countdown)          → dim
+    //  Sensor lines F: R: BR: BL:                    → dim small
+    //  Calibrating / Gyro / Waking                   → italic dim
+
+    if (lw.contains("parking complete")) {
+        html = QString("<span style='color:#55efc4;font-weight:bold;font-size:13px;'>&#127942; %1</span>").arg(esc);
+    } else if (lw.contains("position ok")) {
+        html = QString("<span style='color:#00b894;font-weight:bold;font-size:12px;'>&#10003; %1</span>").arg(esc);
+    } else if (lw.startsWith("phase 5")) {
+        html = QString("<span style='color:#a29bfe;font-weight:bold;font-size:12px;'>&#8633; %1</span>").arg(esc);
+    } else if (lw.startsWith("phase 4")) {
+        html = QString("<span style='color:#fdcb6e;font-weight:bold;font-size:12px;'>&#8634; %1</span>").arg(esc);
+    } else if (lw.contains("extremity reached")) {
+        html = QString("<span style='color:#ff7675;font-weight:bold;font-size:12px;'>&#9888; %1</span>").arg(esc);
+    } else if (lw.startsWith("go straight") || lw.contains("watch right")) {
+        html = QString("<span style='color:#00cec9;font-weight:bold;'>&#9654; %1</span>").arg(esc);
+    } else if (lw.startsWith("step 3")) {
+        html = QString("<span style='color:#74b9ff;font-weight:bold;font-size:12px;'>&#128308; %1</span>").arg(esc);
+    } else if (lw.startsWith("step 2")) {
+        html = QString("<span style='color:#74b9ff;font-size:11px;'>&#128280; %1</span>").arg(esc);
+    } else if (lw.startsWith("step 1")) {
+        html = QString("<span style='color:#00cec9;font-weight:bold;font-size:12px;'>&#128280; %1</span>").arg(esc);
+    } else if (lw.startsWith("!! stop !!")) {
+        html = QString("<span style='color:#ff7675;font-weight:bold;font-size:12px;'>&#9888; %1</span>").arg(esc);
+    } else if (lw.startsWith("!!")) {
+        html = QString("<span style='color:#ff7675;font-weight:bold;'>&#9888; %1</span>").arg(esc);
+    } else if (lw.startsWith(">> ")) {
+        html = QString("<span style='color:#fdcb6e;font-weight:bold;'>&#9654; %1</span>").arg(esc);
+    } else if (lw.contains("turn right") || lw.contains("turn left") || lw.contains("reverse")) {
+        html = QString("<span style='color:#fdcb6e;'>&#9658; %1</span>").arg(esc);
+    } else if (lw.contains("confirmed:") || lw.contains("count:") || lw.contains("wait:")) {
+        // Debug/countdown — dimmed
+        html = QString("<span style='color:#636e72;font-size:10px;font-style:italic;'>%1</span>").arg(esc);
+    } else if (line.startsWith("F:") || line.startsWith("R:") ||
+               line.startsWith("BR:") || line.startsWith("BL:")) {
+        // Raw sensor data — dimmed small
+        html = QString("<span style='color:#636e72;font-size:10px;'>%1</span>").arg(esc);
+    } else if (line.startsWith("Calibrating") || line.startsWith("Gyro") ||
+               line.startsWith("Waking") || lw.startsWith("lost count")) {
+        html = QString("<span style='color:#b2bec3;font-style:italic;'>%1</span>").arg(esc);
+    } else if (line.contains("READY") || line.contains("ACTIVE")) {
+        html = QString("<span style='color:#55efc4;font-weight:bold;'>&#128994; %1</span>").arg(esc);
+    } else {
+        html = QString("<span style='color:#dfe6e9;'>%1</span>").arg(esc);
+    }
+
+    // ── Write to both logs ───────────────────────────────────────────────────
+    if (m_arduinoLog) {
+        m_arduinoLog->append(html);
+        m_arduinoLog->verticalScrollBar()->setValue(m_arduinoLog->verticalScrollBar()->maximum());
+    }
+    if (m_sessionArduinoLog) {
+        m_sessionArduinoLog->append(html);
+        m_sessionArduinoLog->verticalScrollBar()->setValue(m_sessionArduinoLog->verticalScrollBar()->maximum());
+    }
+
+    // ── TTS — speak instructions, skip noise ─────────────────────────────────
+    bool isSensor  = line.startsWith("F:") || line.startsWith("R:") ||
+                     line.startsWith("BR:") || line.startsWith("BL:");
+    bool isDebug   = lw.contains("confirmed:") || lw.contains("count:") ||
+                     lw.contains("wait:") || lw.startsWith("lost count");
+    bool isSep     = line.startsWith("==") || line.startsWith("--");
+    bool isSys     = line.startsWith("Calibrating") || line.startsWith("Gyro") || line.startsWith("Waking");
+
+    if (!isSensor && !isDebug && !isSep && !isSys) {
+        speak(line);
+    }
+
+    // ── Auto-advance: exact Arduino state-machine transition messages ─────────
+    //
+    //  Arduino sendMsg() deduplicates messages — each transition fires ONCE.
+    //  Primary triggers (transition moments, most precise):
+    //    "!! STOP !!"           FORWARD → TURN_LEFT    → Qt step advance
+    //    "GO STRAIGHT"          TURN_LEFT → STEP3_FWD  → Qt step advance
+    //    "!! EXTREMITY REACHED!!" STEP3 → REV_RIGHT    → Qt step advance
+    //    "!! POSITION OK !!"    REV_RIGHT → REV_LEFT   → Qt step advance
+    //    "PARKING COMPLETE"     REV_LEFT → PARKED      → Qt advanceStep() → auto endSession()
+    //  Fallback state-entry messages (sent once per state entry by sendMsg):
+    //    "PHASE 4: REVERSE…"  (REV_RIGHT state msg)   → advance if primary missed
+    //    "PHASE 5: REVERSE…"  (REV_LEFT state msg)    → advance if primary missed
+
+    if (lw.contains("parking complete")) {
+        if (m_sessionActive && !m_arduinoAdvancePending) {
+            m_arduinoAdvancePending = true;
+            showFloatingMessage(
+                QString::fromUtf8("\xf0\x9f\x8f\x86  PARKING COMPLETE !"), "#55efc4");
+            // Step 1 (1.5s): advance to the DONE step so the final diagram is shown.
+            //   • For 7-step Créneau:  step 5 → step 6 "Secure vehicle" (diagram shows parked car).
+            //   • For shorter maneuvers: advanceStep() sees m_currentStep >= m_totalSteps → calls
+            //     endSession() directly and the Step-2 timer below is a safe no-op.
+            QTimer::singleShot(1500, this, [this]() {
+                if (!m_sessionActive) return;
+                advanceStep();                   // shows DONE step (or ends short maneuvers)
+                // Step 2 (2s later): auto-end the session so no manual button press is needed.
+                // m_sessionEndHandled guard in endSession() prevents a double-call if the user
+                // already pressed ✅ Complete or if advanceStep() already called endSession().
+                QTimer::singleShot(2000, this, [this]() {
+                    if (m_sessionActive) endSession();
+                });
+            });
+        }
+        return;
+    }
+
+    bool isStepTransition =
+        lw.startsWith("step 1:")                 ||  // INITIAL → FORWARD  (skips Safety checks)
+        lw.startsWith("!! stop !!")              ||  // FORWARD → TURN_LEFT
+        lw.startsWith("go straight")             ||  // TURN_LEFT → STEP3_FORWARD
+        lw.contains("extremity reached")         ||  // STEP3_FORWARD → REV_RIGHT
+        lw.contains("position ok")               ||  // REV_RIGHT → REV_LEFT
+        lw.startsWith("phase 4")                 ||  // fallback: REV_RIGHT state entry
+        lw.startsWith("phase 5");                    // fallback: REV_LEFT state entry
+
+    if (isStepTransition && m_sessionActive && !m_arduinoAdvancePending) {
+        m_arduinoAdvancePending = true;
+        showFloatingMessage(
+            QString::fromUtf8("\xf0\x9f\xa4\x96 Arduino \xe2\x9c\x85 ") + line,
+            "#00b894");
+        QTimer::singleShot(1500, this, [this]() {
+            if (m_sessionActive) advanceStep();
+        });
+    }
+
+    // ── Fwd Corridor (maneuver 5) — sensor-data auto-advance ─────────────────
+    // The corridor Arduino sends continuous F:/L:/R: lines instead of state-machine
+    // messages.  Parse the front-sensor value (F:) and trigger step advance when
+    // the car transitions between corridor zones.
+    if (m_currentManeuver == 5 && m_sessionActive && !m_arduinoAdvancePending
+        && line.startsWith("F:"))
+    {
+        // Parse front sensor value from "F:40.7 L:-1.0 R:25.0 ..."
+        bool ok = false;
+        int spaceIdx = line.indexOf(' ');
+        float fCm = line.mid(2, spaceIdx > 2 ? spaceIdx - 2 : -1).toFloat(&ok);
+        if (ok && m_currentStep < m_totalSteps) {
+            const QString &phase = m_allManeuvers[5][m_currentStep].sensorPhase;
+
+            // ALIGN → DRIVE: car is at entry, both sensors show corridor walls nearby
+            // When F drops below 80 cm the car is inside the corridor entrance.
+            if (phase == "ALIGN" && fCm > 0 && fCm < 80) {
+                m_arduinoAdvancePending = true;
+                showFloatingMessage(QString::fromUtf8("\xf0\x9f\x9a\x97 Corridor entered!"), "#0984e3");
+                QTimer::singleShot(2000, this, [this]() {
+                    if (m_sessionActive) advanceStep();
+                });
+            }
+            // DRIVE / MIDWAY → next step: front sensor suddenly becomes large (> 100 cm)
+            // or returns -1 (out-of-range) = corridor exit reached, open space ahead.
+            else if ((phase == "DRIVE" || phase == "MIDWAY")
+                     && (fCm < 0 || fCm > 100))
+            {
+                m_arduinoAdvancePending = true;
+                showFloatingMessage(QString::fromUtf8("\xf0\x9f\x9a\x97 Corridor exit detected!"), "#00b894");
+                QTimer::singleShot(1500, this, [this]() {
+                    if (m_sessionActive) advanceStep();
+                });
+            }
+        }
+    }
+
+    // ── Fwd Corridor keyword triggers (if firmware sends named messages) ──────
+    if (m_currentManeuver == 5 && m_sessionActive && !m_arduinoAdvancePending) {
+        bool isCorridor =
+            lw.contains("entry aligned")      ||   // PREP/ALIGN → DRIVE
+            lw.contains("corridor midway")    ||   // DRIVE → MIDWAY
+            lw.contains("midpoint reached")   ||   // DRIVE → MIDWAY
+            lw.contains("corridor clear")     ||   // MIDWAY → DONE
+            lw.contains("exit detected")      ||   // MIDWAY → DONE
+            lw.contains("corridor complete");       // last step
+        if (isCorridor) {
+            m_arduinoAdvancePending = true;
+            showFloatingMessage(
+                QString::fromUtf8("\xf0\x9f\xa4\x96 Arduino \xe2\x9c\x85 ") + line,
+                "#00b894");
+            QTimer::singleShot(1500, this, [this]() {
+                if (m_sessionActive) advanceStep();
+            });
+        }
+    }
+}
+
+// ─── Sync the session-page Bluetooth UI to match connection state ────────────
+void ParkingWidget::syncSessionBtUI()
+{
+    if (!m_sessionBtStatusLbl || !m_sessionBtConnBtn) return;
+
+    bool connected = m_arduinoSerial && m_arduinoSerial->isOpen();
+    QString port = connected ? m_arduinoSerial->portName() : QString();
+
+    if (connected) {
+        m_sessionBtStatusLbl->setText(
+            QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
+        m_sessionBtStatusLbl->setStyleSheet(
+            "font-size:11px;color:#55efc4;background:transparent;border:none;");
+        m_sessionBtConnBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x98  D\xc3\xa9connecter"));
+        m_sessionBtConnBtn->setStyleSheet(
+            "QPushButton{background:#e17055;color:white;border:none;border-radius:8px;"
+            "font-size:12px;font-weight:bold;padding:0 18px;}"
+            "QPushButton:hover{background:#d05f3f;}");
+    } else {
+        m_sessionBtStatusLbl->setText(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
+        m_sessionBtStatusLbl->setStyleSheet(
+            "font-size:11px;color:#ff7675;background:transparent;border:none;");
+        m_sessionBtConnBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Connect Model"));
+        m_sessionBtConnBtn->setStyleSheet(
+            "QPushButton{background:#6c5ce7;color:white;border:none;border-radius:8px;"
+            "font-size:12px;font-weight:bold;padding:0 18px;}"
+            "QPushButton:hover{background:#5a4bd1;}");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -7879,4 +8491,117 @@ void ParkingWidget::showAIApiKeyDialog()
     vL->addLayout(btnL);
 
     dlg.exec();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  LCD ARDUINO 2 — COM6 (USB) — parking timer mirror
+// ═══════════════════════════════════════════════════════════════════
+
+void ParkingWidget::connectLcdPort()
+{
+    if (m_lcdPort && m_lcdPort->isOpen()) return; // already open
+
+    QString hc05Port = m_sensorMgr ? m_sensorMgr->currentPort() : "";
+    QList<QSerialPortInfo> allPorts = QSerialPortInfo::availablePorts();
+
+    auto tryOpen = [&](const QSerialPortInfo &info) -> bool {
+        // Never open the HC-05 Bluetooth port or any BT port
+        if (info.portName() == hc05Port) return false;
+        if (info.description().contains("Bluetooth",  Qt::CaseInsensitive) ||
+            info.description().contains("bluetooth",  Qt::CaseInsensitive) ||
+            info.description().contains("Standard Serial over Bluetooth", Qt::CaseInsensitive))
+            return false;
+
+        if (!m_lcdPort) m_lcdPort = new QSerialPort(this);
+        m_lcdPort->setPortName(info.portName());
+        m_lcdPort->setBaudRate(QSerialPort::Baud9600);
+        m_lcdPort->setDataBits(QSerialPort::Data8);
+        m_lcdPort->setParity(QSerialPort::NoParity);
+        m_lcdPort->setStopBits(QSerialPort::OneStop);
+        m_lcdPort->setFlowControl(QSerialPort::NoFlowControl);
+
+        if (m_lcdPort->open(QIODevice::ReadWrite)) {
+            qDebug() << "[LCD] Connected to" << info.portName()
+                     << "(" << info.description() << ")";
+            if (m_lcdStatus) {
+                m_lcdStatus->setText(QString::fromUtf8("\xf0\x9f\x9f\xa2 LCD"));
+                m_lcdStatus->setStyleSheet("QLabel{font-size:9px;color:#00b894;background:#e8f8f5;"
+                    "border-radius:8px;padding:3px 8px;border:none;}");
+            }
+            // Arduino resets when the port opens (DTR toggle) — wait ~2s for boot.
+            // Don't send RESET if a session is already running (would wipe the timer).
+            QTimer::singleShot(2000, this, [this]{
+                if (!m_sessionActive) sendToLcd("RESET");
+            });
+            QTimer::singleShot(3500, this, [this]{
+                if (!m_sessionActive) sendToLcd("RESET");
+            });
+            // At 4s: push current session state to LCD
+            QTimer::singleShot(4000, this, [this]{
+                if (m_sessionActive) {
+                    sendToLcd("START");
+                    sendToLcd(QString("S:%1/%2")
+                        .arg(m_currentStep + 1).arg(m_totalSteps));
+                    int mn = m_sessionSeconds / 60, sc = m_sessionSeconds % 60;
+                    sendToLcd(QString("T:%1:%2")
+                        .arg(mn, 2, 10, QChar('0'))
+                        .arg(sc, 2, 10, QChar('0')));
+                    qDebug() << "[LCD] Resynced active session to LCD";
+                } else {
+                    sendToLcd("RESET");
+                }
+            });
+            return true;
+        }
+        m_lcdPort->close();
+        return false;
+    };
+
+    // Pass 1 — prefer hardcoded COM6 (confirmed Arduino Uno on this machine)
+    for (const auto &info : allPorts) {
+        if (info.portName() == "COM6") {
+            if (tryOpen(info)) return;
+        }
+    }
+    // Pass 2 — any USB Arduino/CH340/CP210 port
+    for (const auto &info : allPorts) {
+        const QString desc = info.description();
+        if (desc.contains("Arduino", Qt::CaseInsensitive) ||
+            desc.contains("CH340",   Qt::CaseInsensitive) ||
+            desc.contains("CP210",   Qt::CaseInsensitive)) {
+            if (tryOpen(info)) return;
+        }
+    }
+
+    qDebug() << "[LCD] No Arduino 2 found on any USB port";
+    for (const auto &info : allPorts)
+        qDebug() << " " << info.portName() << info.description();
+
+    if (m_lcdStatus) {
+        m_lcdStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 LCD"));
+        m_lcdStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
+            "border-radius:8px;padding:3px 8px;border:none;}");
+    }
+}
+
+void ParkingWidget::retryLcdConnect()
+{
+    if (m_lcdPort && m_lcdPort->isOpen()) m_lcdPort->close();
+    connectLcdPort();
+}
+
+void ParkingWidget::sendToLcd(const QString &cmd)
+{
+    if (!m_lcdPort || !m_lcdPort->isOpen()) {
+        if (m_lcdStatus &&
+            m_lcdStatus->text().contains(QString::fromUtf8("\xf0\x9f\x9f\xa2"))) {
+            m_lcdStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 LCD"));
+            m_lcdStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
+                "border-radius:8px;padding:3px 8px;border:none;}");
+        }
+        return;
+    }
+    m_lcdPort->write((cmd + "\n").toUtf8());
+    m_lcdPort->flush();
+    qDebug() << "[LCD] Sent:" << cmd;
 }

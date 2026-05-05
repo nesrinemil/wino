@@ -30,6 +30,7 @@
 #include <QSettings>
 #include <QInputDialog>
 
+#include <QScrollBar>
 #include "sensormanager.h"
 #include "parkingdbmanager.h"
 
@@ -281,6 +282,26 @@ private:
     QList<int>  m_fullExamScores;  // score per completed phase
     QList<bool> m_fullExamSuccess; // success per completed phase
 
+    // ── Arduino HC-05 Bluetooth Monitor (Full ATTT Exam card) ──
+    QSerialPort  *m_arduinoSerial   = nullptr;
+    QTextEdit    *m_arduinoLog      = nullptr;   // log on home card
+    QPushButton  *m_btConnectBtn    = nullptr;
+    QComboBox    *m_btPortCombo     = nullptr;
+    QLabel       *m_btStatusLbl     = nullptr;
+    QString       m_arduinoBuffer;
+    bool          m_arduinoAdvancePending = false; // debounce: prevents double-advance
+    bool          m_sessionEndHandled    = false; // idempotency: prevents double endSession()
+    void onArduinoDataReady();
+    void appendArduinoMessage(const QString &line);
+
+    // ── Arduino log mirrored in Session page (below car diagram) ──
+    QTextEdit    *m_sessionArduinoLog  = nullptr;
+    QPushButton  *m_sessionBtConnBtn   = nullptr;
+    QComboBox    *m_sessionBtPortCombo = nullptr;
+    QLabel       *m_sessionBtStatusLbl = nullptr;
+    QFrame       *m_sessionBtPanel     = nullptr;  // the whole panel (show in exam mode)
+    void syncSessionBtUI();                         // updates session panel to match connection state
+
     // ── Maneuver state ──
     int m_currentManeuver, m_currentStep, m_totalSteps;
 
@@ -370,6 +391,13 @@ private:
     int  m_pendingStep;
     bool m_maquetteConnected, m_simulationMode;
     QFrame *m_simButtonPanel;
+
+    // ── LCD Arduino 2 (USB COM6) ──
+    QSerialPort *m_lcdPort   = nullptr;
+    QLabel      *m_lcdStatus = nullptr;
+    void connectLcdPort();
+    void retryLcdConnect();
+    void sendToLcd(const QString &cmd);
 
     // ── DB Sensor Messages ──
     QLabel *m_dbMsgLabel;

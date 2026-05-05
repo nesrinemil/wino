@@ -1,5 +1,6 @@
 #include "sensormanager.h"
 #include <QDebug>
+#include <QDateTime>
 
 SensorManager::SensorManager(QObject *parent)
     : QObject(parent), m_simulation(false)
@@ -88,10 +89,21 @@ void SensorManager::onDataReady()
 
 void SensorManager::onSerialError(QSerialPort::SerialPortError error)
 {
-    if (error != QSerialPort::NoError) {
-        qDebug() << "[SENSOR] Erreur série:" << m_serial->errorString();
-        emit connectionError(m_serial->errorString());
-    }
+    if (error == QSerialPort::NoError) return;
+
+    // Qt can emit 2+ different error codes for the same OS error (e.g. "Access is denied").
+    // Use message + timestamp deduplication: suppress if same message within 3 s.
+    static qint64  lastShownMs = 0;
+    static QString lastMsg;
+    qint64  now = QDateTime::currentMSecsSinceEpoch();
+    QString msg = m_serial->errorString();
+
+    if (msg == lastMsg && (now - lastShownMs) < 3000) return;
+    lastShownMs = now;
+    lastMsg     = msg;
+
+    qDebug() << "[SENSOR] Erreur série:" << msg;
+    emit connectionError(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
