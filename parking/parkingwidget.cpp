@@ -3571,75 +3571,9 @@ QWidget* ParkingWidget::createCarDiagram()
         // 1. Sensor maquette connection (existing behaviour)
         connectMaquette();
 
-        // 2. HC-05 Arduino serial — only if not already open
-        if (!m_arduinoSerial || !m_arduinoSerial->isOpen()) {
-            if (!m_arduinoSerial) {
-                m_arduinoSerial = new QSerialPort(this);
-                connect(m_arduinoSerial, &QSerialPort::readyRead,
-                        this, &ParkingWidget::onArduinoDataReady);
-            }
-            // Prefer the port chosen on the Full ATTT card; fall back to first available
-            QString port = (m_btPortCombo && m_btPortCombo->count() > 0)
-                               ? m_btPortCombo->currentText() : QString("COM3");
-            m_arduinoSerial->setPortName(port);
-            m_arduinoSerial->setBaudRate(QSerialPort::Baud9600);
-            m_arduinoSerial->setDataBits(QSerialPort::Data8);
-            m_arduinoSerial->setParity(QSerialPort::NoParity);
-            m_arduinoSerial->setStopBits(QSerialPort::OneStop);
-            m_arduinoSerial->setFlowControl(QSerialPort::NoFlowControl);
-
-            if (m_arduinoSerial->open(QIODevice::ReadOnly)) {
-                // Update Full ATTT card status labels
-                if (m_btStatusLbl) {
-                    m_btStatusLbl->setText(
-                        QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
-                    m_btStatusLbl->setStyleSheet(
-                        "font-size:11px;color:#55efc4;background:transparent;");
-                }
-                if (m_btConnectBtn) {
-                    m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x98  D\xc3\xa9connecter"));
-                    m_btConnectBtn->setStyleSheet(
-                        "QPushButton{background:#e17055;color:white;border:none;border-radius:8px;"
-                        "font-size:12px;font-weight:bold;padding:0 14px;}"
-                        "QPushButton:hover{background:#d05f3f;}");
-                }
-                // Notify in the session log
-                if (m_sessionArduinoLog)
-                    m_sessionArduinoLog->append(QString::fromUtf8(
-                        "<span style='color:#55efc4;font-weight:bold;'>&#9679; HC-05 connect\xc3\xa9 sur ")
-                        + port + "</span>");
-                // Change button to green "Connected"
-                conn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Disconnect"));
-                conn->setStyleSheet(
-                    "QPushButton{background:#e17055;color:white;border:none;border-radius:10px;"
-                    "padding:0 14px;font-size:12px;font-weight:bold;}"
-                    "QPushButton:hover{background:#d05f3f;}");
-            } else {
-                if (m_sessionArduinoLog)
-                    m_sessionArduinoLog->append(QString::fromUtf8(
-                        "<span style='color:#ff7675;'>&#9888; HC-05 erreur: ")
-                        + m_arduinoSerial->errorString() + "</span>");
-            }
-        } else {
-            // Already connected — disconnect HC-05
-            m_arduinoSerial->close();
-            if (m_btStatusLbl) {
-                m_btStatusLbl->setText(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
-                m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
-            }
-            if (m_btConnectBtn) {
-                m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
-                m_btConnectBtn->setStyleSheet(
-                    "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
-                    "font-size:12px;font-weight:bold;padding:0 14px;}"
-                    "QPushButton:hover{background:#00a381;}");
-            }
-            conn->setText(QString::fromUtf8("\xf0\x9f\x94\x8c  Connect Model"));
-            conn->setStyleSheet(
-                "QPushButton{background:#0984e3;color:white;border:none;border-radius:10px;"
-                "padding:0 14px;font-size:12px;font-weight:bold;}"
-                "QPushButton:hover{background:#0870c0;}");
-        }
+        // NOTE: m_arduinoSerial second-open removed — it was trying to open the same COM3
+        // port as m_sensorMgr, causing "Access is denied" on both.
+        // m_sensorMgr now routes raw lines to appendArduinoMessage via rawLineReceived signal.
     });
 
     // LCD status badge (next to Connect button)
@@ -4579,6 +4513,18 @@ QWidget* ParkingWidget::createFullExamCard()
                         this, &ParkingWidget::onArduinoDataReady);
             }
             QString port = m_btPortCombo->currentText();
+            // If m_sensorMgr already has this port open, don't open a second handle
+            if (m_sensorMgr && m_sensorMgr->currentPort() == port && m_sensorMgr->isConnected()) {
+                m_btStatusLbl->setText(
+                    QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
+                m_btStatusLbl->setStyleSheet("font-size:11px;color:#55efc4;background:transparent;");
+                if (m_arduinoLog)
+                    m_arduinoLog->append(QString::fromUtf8(
+                        "<span style='color:#55efc4;'>&#9679; Shared with SensorMgr \xe2\x80\x94 ")
+                        + port + "</span>");
+                syncSessionBtUI();
+                return;
+            }
             m_arduinoSerial->setPortName(port);
             m_arduinoSerial->setBaudRate(QSerialPort::Baud9600);
             m_arduinoSerial->setDataBits(QSerialPort::Data8);
@@ -5377,6 +5323,11 @@ void ParkingWidget::connectSensorSignals()
 {
     connect(m_sensorMgr, &SensorManager::connected, this, [this](){ onConnectionChanged(true); });
     connect(m_sensorMgr, &SensorManager::disconnected, this, [this](){ onConnectionChanged(false); });
+
+    // Route every raw HC-05 line to the session log display
+    // (replaces the duplicate m_arduinoSerial open — one port, one handler)
+    connect(m_sensorMgr, &SensorManager::rawLineReceived,
+            this, &ParkingWidget::appendArduinoMessage);
     connect(m_sensorMgr, &SensorManager::rightObstacleDetected, this, [this](){ onSensorEvent("RIGHT_OBSTACLE"); });
     connect(m_sensorMgr, &SensorManager::leftObstacleDetected, this, [this](){ onSensorEvent("LEFT_OBSTACLE"); });
     connect(m_sensorMgr, &SensorManager::leftSensor1Detected, this, [this](){ onSensorEvent("LEFT_SENSOR1"); });
