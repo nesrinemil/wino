@@ -115,16 +115,73 @@ void SensorManager::onSerialError(QSerialPort::SerialPortError error)
 //   "D:F=150,L=45,R=12,RL=200,RR=30" → distances cm
 //   "E:RIGHT_OBSTACLE"              → événement
 //
+// ── Arduino raw sensor line: "F:56.3 L:16.0 R:263.9 BR:172.7 BL:-1.0 θ:0.0°" ──
+static bool parseArduinoRawSensors(const QString &line, ParkingSensorData &data)
+{
+    if (!line.startsWith("F:") || !line.contains(" L:") || !line.contains(" R:"))
+        return false;
+    auto extractVal = [&](const QString &key) -> double {
+        int idx = line.indexOf(key);
+        if (idx < 0) return -1.0;
+        int start = idx + key.length();
+        int end = start;
+        while (end < line.length() && (line[end].isDigit() || line[end] == '.' || line[end] == '-'))
+            end++;
+        bool ok;
+        double v = line.mid(start, end - start).toDouble(&ok);
+        return ok ? v : -1.0;
+    };
+    data.distAvant     = extractVal("F:");
+    data.distGauche    = extractVal(" L:");
+    data.distDroit     = extractVal(" R:");
+    data.distArrDroit  = extractVal("BR:");
+    data.distArrGauche = extractVal("BL:");
+    return true;
+}
+
 void SensorManager::parseLine(const QString &line)
 {
     qDebug() << "[SENSOR] Reçu:" << line;
 
+    // Always emit raw line for terminal/log display
+    emit rawLineReceived(line);
+
     if (line.startsWith("S:")) {
         parseSensorState(line.mid(2));
-    } else if (line.startsWith("D:")) {
+        return;
+    }
+    if (line.startsWith("D:")) {
         parseDistances(line.mid(2));
-    } else if (line.startsWith("E:")) {
+        return;
+    }
+    if (line.startsWith("E:")) {
         parseEvent(line.mid(2).trimmed());
+        return;
+    }
+
+    // Arduino raw sensor format
+    if (parseArduinoRawSensors(line, m_data)) {
+        emit sensorDataUpdated(m_data);
+        return;
+    }
+
+    // HC-05 connection confirmation
+    if (line.contains("HC-05 connected") || line.contains("HC-05 connecté")) {
+        emit connected("HC-05");
+        return;
+    }
+
+    // Arduino state-machine step transitions → auto-advance signals
+    if (line.contains("TURN RIGHT + GO FORWARD")) {
+        emit arduinoStepAdvance("STEP1_DONE");
+    } else if (line.contains("GO STRAIGHT") && line.contains("barrier")) {
+        emit arduinoStepAdvance("STEP2_DONE");
+    } else if (line.contains("EXTREMITY REACHED")) {
+        emit arduinoStepAdvance("STEP3_DONE");
+    } else if (line.contains("POSITION OK")) {
+        emit arduinoStepAdvance("STEP4_DONE");
+    } else if (line.contains("PARKING COMPLETE")) {
+        emit arduinoStepAdvance("PARKING_DONE");
     }
 }
 

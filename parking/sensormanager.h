@@ -90,6 +90,12 @@ signals:
     void disconnected();
     void connectionError(const QString &error);
 
+    // Raw serial line (for terminal display)
+    void rawLineReceived(const QString &line);
+
+    // Arduino state-machine step transitions (for auto-advance)
+    void arduinoStepAdvance(const QString &step);
+
 private slots:
     void onDataReady();
     void onSerialError(QSerialPort::SerialPortError error);
