@@ -753,6 +753,7 @@ git push origin master
 
 | Date | What changed | File(s) |
 |---|---|---|
+| 2026-05-05 | **Parcours Circuit** tab added to instructor dashboard — CircuitTrackView (QPainter S-curve animated car), ParcourCircuitWidget (6-step session, Arduino HC-05 connect, history table, Oracle session save) | `parcourcircuitwidget.h/.cpp`, `instructordashboard.h/.cpp`, `DrivingSchoolApp.pro` |
 | 2026-04-10 | Sessions page redesign, AI page embedded in m_mainStack | `wino_studentdashboard.cpp` |
 | 2026-04-10 | Admin panel role-based nav (Moniteur), Page 10 Parking students | `adminwidget.cpp` |
 | 2026-04-10 | ParkingWidget auto vehicle selection, removed Change Vehicle button | `parkingwidget.cpp` |

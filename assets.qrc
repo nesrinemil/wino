@@ -1,5 +1,10 @@
 <RCC>
     <qresource prefix="/assets">
+        <file alias="wino_logo.png">assets/wino_logo.png</file>
+        <file alias="circuit1.png">assets/circuit1.png</file>
+        <file alias="circuit2.png">assets/circuit2.png</file>
+        <file alias="circuit3.png">assets/circuit3.png</file>
+        <file alias="circuit4.png">assets/circuit4.png</file>
         <file>assets/frontcin.svg</file>
         <file>assets/backcin.svg</file>
         <file>assets/checkmark.svg</file>

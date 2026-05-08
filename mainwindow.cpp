@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include <QPixmap>
 #include "database.h"
 #include "admindashboard.h"
 #include "instructordashboard.h"
@@ -97,6 +98,26 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui = new Ui::MainWindow;
     ui->setupUi(this);
+
+    // ── WINO Logo on login screen ──
+    {
+        QPixmap logo(":/assets/wino_logo.png");
+        if (!logo.isNull()) {
+            ui->labelAppTitle->setPixmap(
+                logo.scaled(280, 280, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            ui->labelAppTitle->setAlignment(Qt::AlignHCenter | Qt::AlignBottom);
+            ui->labelAppTitle->setMinimumHeight(290);
+            ui->labelAppTitle->setMaximumHeight(290);
+            ui->labelAppTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            // Small bottom margin so logo sits snug above the card
+            ui->labelAppTitle->setContentsMargins(0, 0, 0, 8);
+        }
+    }
+
+    // ── Vertical placement: more space above logo, tighter below card ──
+    // Items in verticalLayout_6: 0=topSpacer, 1=logo, 2=logoToCardSpacer, 3=card
+    ui->verticalLayout_6->setStretch(0, 2);   // top spacer — pushes content slightly lower
+    ui->verticalLayout_6->addStretch(1);      // bottom spacer — less than top → card sits center-low
 
     // Initialize network manager for API calls
     networkManager = new QNetworkAccessManager(this);
@@ -2309,11 +2330,12 @@ void MainWindow::initCars()
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
     // Lane definitions: {yMin, yMax, sMin, sMax, vMin, vMax, oMin, oMax, count}
+    // y ranges cover the full window height (800px assumed; cars spread top-to-bottom)
     struct LaneDef { int yLo,yHi; qreal sLo,sHi,vLo,vHi,oLo,oHi; int n; };
     const LaneDef lanes[] = {
-        { 100, 200, 0.32, 0.48, 0.25, 0.55, 0.05, 0.08, 5 },
-        { 230, 360, 0.55, 0.75, 0.55, 0.95, 0.07, 0.11, 5 },
-        { 390, 540, 0.82, 1.10, 0.90, 1.50, 0.10, 0.15, 5 },
+        {  60, 190, 0.32, 0.48, 0.25, 0.55, 0.05, 0.08, 5 },   // top lane
+        { 240, 440, 0.55, 0.75, 0.55, 0.95, 0.07, 0.11, 6 },   // middle lane (wider)
+        { 490, 720, 0.82, 1.10, 0.90, 1.50, 0.10, 0.15, 5 },   // bottom lane
     };
 
     for (const auto &l : lanes) {

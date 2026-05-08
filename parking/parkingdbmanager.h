@@ -57,7 +57,9 @@ public:
     int startSession(int eleveId, int vehiculeId, const QString &manoeuvreType,
                      bool modeExamen = false);
     void endSession(int sessionId, bool reussi, int duree, int etapes,
-                    int erreurs = 0, int calages = 0, bool contactObstacle = false);
+                    int erreurs = 0, int calages = 0, bool contactObstacle = false,
+                    int score = 0, const QString &parkingType = QString());
+    int  getBestScore(int studentId, const QString &maneuverType);
     bool deleteSession(int sessionId);
     QVariantMap getSession(int id);
     QList<QVariantMap> getSessionsEleve(int eleveId, int limit = 20);

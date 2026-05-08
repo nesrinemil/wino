@@ -10,6 +10,7 @@
 #include <QDate>
 #include <QPixmap>
 #include "wino/thememanager.h"
+#include "parcourcircuitwidget.h"
 
 namespace Ui {
 class InstructorDashboard;
@@ -50,6 +51,7 @@ private:
     QWidget                 *m_winoTabWidget     = nullptr;
     AdminWidget             *m_adminTab          = nullptr;
     QWidget                 *m_adminTabWidget    = nullptr;
+    ParcourCircuitWidget    *m_parcourTab        = nullptr;   // tab inside CircuitDashboard
 
     // Sidebar nav buttons (student-area style)
     QPushButton *m_navRequests   = nullptr;

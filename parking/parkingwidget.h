@@ -275,6 +275,7 @@ private:
     int  m_sessionSeconds;
     bool m_sessionActive, m_examMode;
     bool m_freeTrainingMode;
+    bool m_rfidAutoStart = false;   // true → skip checklist and start immediately
 
     // ── Full Exam Mode (4 maneuvers chained in sequence) ──
     bool m_fullExamMode;
@@ -398,9 +399,11 @@ private:
     // ── LCD Arduino 2 (USB COM6) ──
     QSerialPort *m_lcdPort   = nullptr;
     QLabel      *m_lcdStatus = nullptr;
+    QString      m_lcdBuffer;              // incoming serial line buffer
     void connectLcdPort();
     void retryLcdConnect();
     void sendToLcd(const QString &cmd);
+    void onLcdDataReady();                 // parse RFID / LCD data from Arduino
 
     // ── DB Sensor Messages ──
     QLabel *m_dbMsgLabel;

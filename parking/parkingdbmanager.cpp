@@ -180,6 +180,43 @@ void ParkingDBManager::createTables()
         }
     }
 
+    // ── PARKING_SESSIONS : add parking_type column if missing ──
+    {
+        q.prepare("SELECT COUNT(*) FROM user_tab_columns "
+                  "WHERE table_name='PARKING_SESSIONS' AND column_name='PARKING_TYPE'");
+        if (q.exec() && q.next() && q.value(0).toInt() == 0) {
+            qDebug() << "[DB] Adding PARKING_TYPE column to PARKING_SESSIONS...";
+            q.exec("ALTER TABLE PARKING_SESSIONS ADD parking_type VARCHAR2(50)");
+            if (q.lastError().isValid())
+                qDebug() << "[DB] ALTER PARKING_SESSIONS (parking_type) error:" << q.lastError().text();
+        }
+    }
+
+    // ── PARKING_SESSIONS : add score column if missing ──
+    {
+        q.prepare("SELECT COUNT(*) FROM user_tab_columns "
+                  "WHERE table_name='PARKING_SESSIONS' AND column_name='SCORE'");
+        if (q.exec() && q.next() && q.value(0).toInt() == 0) {
+            qDebug() << "[DB] Adding SCORE column to PARKING_SESSIONS...";
+            q.exec("ALTER TABLE PARKING_SESSIONS ADD score NUMBER(3,0)");
+            if (q.lastError().isValid())
+                qDebug() << "[DB] ALTER PARKING_SESSIONS (score) error:" << q.lastError().text();
+        }
+    }
+
+    // ── PARKING_SESSIONS : add completion_time column if missing ──
+    // completion_time stored as "MM:SS" string (e.g. "02:34") when LCD stops.
+    {
+        q.prepare("SELECT COUNT(*) FROM user_tab_columns "
+                  "WHERE table_name='PARKING_SESSIONS' AND column_name='COMPLETION_TIME'");
+        if (q.exec() && q.next() && q.value(0).toInt() == 0) {
+            qDebug() << "[DB] Adding COMPLETION_TIME column to PARKING_SESSIONS...";
+            q.exec("ALTER TABLE PARKING_SESSIONS ADD completion_time VARCHAR2(8)");
+            if (q.lastError().isValid())
+                qDebug() << "[DB] ALTER PARKING_SESSIONS (completion_time) error:" << q.lastError().text();
+        }
+    }
+
     // ── PARKING_EXAM_SLOTS : create if missing ──
     if (!tableExists("PARKING_EXAM_SLOTS")) {
         q.exec("CREATE TABLE PARKING_EXAM_SLOTS ("
@@ -790,23 +827,69 @@ int ParkingDBManager::startSession(int eleveId, int vehiculeId,
 }
 
 void ParkingDBManager::endSession(int sessionId, bool reussi, int duree, int etapes,
-                                  int erreurs, int calages, bool contactObstacle)
+                                  int erreurs, int calages, bool contactObstacle,
+                                  int score, const QString &parkingType)
 {
     if (!isConnected()) { qDebug() << "[DB] endSession: not connected"; return; }
     if (sessionId <= 0) { qDebug() << "[DB] endSession: invalid sessionId=" << sessionId; return; }
+
+    // ── UPDATE 1: original fields (proven working) ───────────────────────────
     QSqlQuery q(m_db);
-    q.prepare("UPDATE PARKING_SESSIONS SET session_end=SYSTIMESTAMP, is_successful=?, duration_seconds=?,"
-              "steps_completed=?, error_count=?, stall_count=?, obstacle_contact=? "
-              "WHERE session_id=?");
-    q.addBindValue(reussi ? 1 : 0); q.addBindValue(duree);
-    q.addBindValue(etapes); q.addBindValue(erreurs);
-    q.addBindValue(calages); q.addBindValue(contactObstacle ? 1 : 0);
+    q.prepare("UPDATE PARKING_SESSIONS SET session_end=SYSTIMESTAMP, is_successful=?, "
+              "duration_seconds=?, steps_completed=?, error_count=?, stall_count=?, "
+              "obstacle_contact=? WHERE session_id=?");
+    q.addBindValue(reussi ? 1 : 0);
+    q.addBindValue(duree);
+    q.addBindValue(etapes);
+    q.addBindValue(erreurs);
+    q.addBindValue(calages);
+    q.addBindValue(contactObstacle ? 1 : 0);
     q.addBindValue(sessionId);
-    if (q.exec())
+    if (!q.exec())
+        qDebug() << "[DB] endSession UPDATE1 FAILED:" << q.lastError().text();
+
+    // ── UPDATE 2: score + completion_time (MM:SS) + parking_type ────────────
+    // Use direct SQL string for VARCHAR2 columns — Oracle ODBC has issues
+    // binding QString with ? placeholders for VARCHAR2 column types.
+    QString mmss = QString("%1:%2")
+        .arg(duree / 60, 2, 10, QChar('0'))
+        .arg(duree % 60, 2, 10, QChar('0'));
+
+    // Sanitize strings (remove single quotes to prevent SQL issues)
+    QString safeType = parkingType.isEmpty() ? "Parking" : parkingType;
+    safeType.remove('\'');
+
+    QString sql2 = QString(
+        "UPDATE PARKING_SESSIONS SET "
+        "score=%1, "
+        "completion_time='%2', "
+        "parking_type='%3' "
+        "WHERE session_id=%4")
+        .arg(score)
+        .arg(mmss)
+        .arg(safeType)
+        .arg(sessionId);
+
+    QSqlQuery q2(m_db);
+    if (q2.exec(sql2))
         qDebug() << "[DB] endSession OK → session_id=" << sessionId
-                 << " success=" << reussi << " rows=" << q.numRowsAffected();
+                 << " score=" << score << " time=" << mmss
+                 << " type=" << safeType;
     else
-        qDebug() << "[DB] endSession FAILED:" << q.lastError().text();
+        qDebug() << "[DB] endSession UPDATE2 FAILED:" << q2.lastError().text()
+                 << " SQL:" << sql2;
+}
+
+int ParkingDBManager::getBestScore(int studentId, const QString &maneuverType)
+{
+    if (!isConnected()) return 0;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT NVL(MAX(score), 0) FROM PARKING_SESSIONS "
+              "WHERE student_id=? AND maneuver_type=? AND score IS NOT NULL AND score > 0");
+    q.addBindValue(studentId);
+    q.addBindValue(maneuverType);
+    if (q.exec() && q.next()) return q.value(0).toInt();
+    return 0;
 }
 
 bool ParkingDBManager::deleteSession(int sessionId)

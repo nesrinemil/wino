@@ -34,17 +34,18 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
     connect(ui->logoutButton, &QPushButton::clicked, this, &InstructorDashboard::onLogoutClicked);
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &InstructorDashboard::switchTab);
 
-    // ── Circuit Analysis tab (lazy-loaded on first switch) ───────────────────
+    // ── Circuit Analysis tab (index 3) ───────────────────────────────────────
+    // Parcours Circuit is embedded INSIDE CircuitDashboard as its own tab (next to History)
     m_circuitTab = new QWidget();
     m_circuitTab->setLayout(new QVBoxLayout(m_circuitTab));
     ui->tabWidget->addTab(m_circuitTab, "⚡ Circuit");
 
-    // ── WINO Sessions tab (lazy-loaded on first switch) ───────────────────────
+    // ── WINO Sessions tab (index 4) ───────────────────────────────────────────
     m_winoTabWidget = new QWidget();
     m_winoTabWidget->setLayout(new QVBoxLayout(m_winoTabWidget));
     ui->tabWidget->addTab(m_winoTabWidget, "📅 Sessions");
 
-    // ── Administration tab (lazy-loaded on first switch) ──────────────────────
+    // ── Administration / Parking tab (index 5) ────────────────────────────────
     m_adminTabWidget = new QWidget();
     m_adminTabWidget->setLayout(new QVBoxLayout(m_adminTabWidget));
     ui->tabWidget->addTab(m_adminTabWidget, QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Parking"));
@@ -811,7 +812,38 @@ void InstructorDashboard::switchTab(int index)
             bool curDark = ThemeManager::instance()->currentTheme() == ThemeManager::Dark;
             applyThemeToCircuit(curDark);
 
-            // Wrap in a scroll area so content is scrollable
+            // ── Inject Parcours Circuit as a tab inside CircuitDashboard ─────
+            // ParcourCircuitWidget manages its own scroll — add directly
+            m_parcourTab = new ParcourCircuitWidget(m_circuitDashboard);
+            m_parcourTab->setInstructorId(instructorId > 0 ? instructorId : 1);
+            m_parcourTab->setSchoolId(schoolId);
+            connect(m_parcourTab, &QObject::destroyed, this, [this]() {
+                m_parcourTab = nullptr;
+            });
+            // When a Parcours session ends → load results into CircuitDashboard
+            connect(m_parcourTab, &ParcourCircuitWidget::sessionCompleted,
+                    this, [this](const QVector<ProcessedData>& data,
+                                 double stressIdx, double riskScore)
+            {
+                if (!m_circuitDashboard) return;
+                SessionContext ctx;
+                ctx.road_type = "Neighborhood";
+                ctx.weather   = "Sunny";
+                // Switch to Analysis tab (index 0) inside CircuitDashboard
+                QTimer::singleShot(100, this, [this, data, stressIdx, riskScore, ctx]() {
+                    m_circuitDashboard->loadFromArduinoSession(
+                        data, stressIdx, riskScore, ctx);
+                });
+            });
+            m_circuitDashboard->addExtraTab(
+                m_parcourTab,
+                QString::fromUtf8("\xf0\x9f\x8f\x81  Parcours"));
+
+            // Sync CircuitDashboard student selection → Parcours student ID
+            connect(m_circuitDashboard, &CircuitDashboard::studentSelected,
+                    m_parcourTab, &ParcourCircuitWidget::setStudentId);
+
+            // Wrap CircuitDashboard in a scroll area
             QScrollArea *sa = new QScrollArea(m_circuitTab);
             sa->setWidget(m_circuitDashboard);
             sa->setWidgetResizable(true);
@@ -869,6 +901,7 @@ void InstructorDashboard::switchTab(int index)
             m_adminTabWidget->layout()->addWidget(sa);
         }
     }
+
 }
 
 // ══════════════════════════════════════════════════════════════

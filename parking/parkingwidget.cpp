@@ -1,5 +1,6 @@
 #include "parkingwidget.h"
 #include "statisticswidget.h"
+#include <QElapsedTimer>
 #include <QDialog>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -54,11 +55,11 @@ void ParkingWidget::initManeuverData()
         QString::fromUtf8("Perpendicular"),
         QString::fromUtf8("Diagonal"),
         QString::fromUtf8("Reverse"),
-        QString::fromUtf8("U-turn"),
+        QString::fromUtf8("Marche Avant"),
         QString::fromUtf8("Fwd Corridor")  // index 5 — used by Full Exam
     };
     // DB keys — must match maneuver_type values stored in PARKING_SESSIONS / PARKING_MANEUVER_STEPS
-    m_maneuverDbKeys = {"creneau", "bataille", "epi", "marche_arriere", "demi_tour", "marche_avant"};
+    m_maneuverDbKeys = {"creneau", "bataille", "epi", "marche_arriere", "marche_avant", "corridor"};
     m_maneuverIcons = {
         QString::fromUtf8("🅿️"),
         QString::fromUtf8("🔲"),
@@ -1269,7 +1270,7 @@ void StepDiagramWidget::paintEvent(QPaintEvent *)
     p.setFont(QFont("Segoe UI",8,QFont::Bold));
     p.setPen(QColor(100,110,120));
     p.drawText(QRectF(W-85,H-20,75,16), Qt::AlignRight, QString("Step %1/%2").arg(m_step+1).arg(m_totalSteps));
-    QStringList names={"Parallel","Perpendicular","Diagonal","Reverse","U-turn","Fwd Corridor"};
+    QStringList names={"Parallel","Perpendicular","Diagonal","Reverse","Marche Avant","Fwd Corridor"};
     if(m_maneuver>=0&&m_maneuver<names.size()){
         QFont nf("Segoe UI",8,QFont::Bold); p.setFont(nf);
         QFontMetrics fm(nf); int tw=fm.horizontalAdvance(names[m_maneuver])+16;
@@ -1435,7 +1436,7 @@ void ParkingWidget::computeAndSyncParkingScore()
 {
     if (m_currentEleveId <= 0) return;
 
-    const int NUM_MANEUVERS = 5; // standard: creneau, bataille, epi, marche_arriere, demi_tour
+    const int NUM_MANEUVERS = 3; // standard: marche_avant(4), creneau(0), marche_arriere(3)
     double totalContribution = 0.0;
 
     for (int i = 0; i < NUM_MANEUVERS && i < m_maneuverAttemptCounts.size(); i++) {
@@ -1687,11 +1688,18 @@ void ParkingWidget::refreshHistoryUI()
         QString date = s["date_debut"].toString().left(16);
         bool examMode = s.contains("mode_examen") && s["mode_examen"].toBool();
 
-        // Find icon for maneuver (manType comes from DB — uses db keys like "creneau")
+        // Find icon and friendly name for maneuver (manType is DB key like "creneau")
         QString icon = QString::fromUtf8("\xf0\x9f\x94\xb2");
+        QString friendlyName = manType;  // fallback to raw key
         for(int i = 0; i < m_maneuverDbKeys.size(); i++){
-            if(m_maneuverDbKeys[i] == manType){ icon = m_maneuverIcons[i]; break; }
+            if(m_maneuverDbKeys[i] == manType){
+                icon = m_maneuverIcons[i];
+                friendlyName = m_maneuverNames[i];
+                break;
+            }
         }
+        // Legacy key fallback: "demi_tour" was renamed to "marche_avant"
+        if(manType == "demi_tour") friendlyName = QString::fromUtf8("Marche Avant");
 
         // Status dot
         QLabel *dot = new QLabel(reussi ? QString::fromUtf8("\xe2\x9c\x85") :
@@ -1701,8 +1709,8 @@ void ParkingWidget::refreshHistoryUI()
         dot->setStyleSheet("QLabel{font-size:12px;background:transparent;border:none;}");
         rl->addWidget(dot);
 
-        // Maneuver name
-        QLabel *nm = new QLabel(icon + " " + manType, row);
+        // Maneuver name (friendly display name, not raw DB key)
+        QLabel *nm = new QLabel(icon + " " + friendlyName, row);
         nm->setStyleSheet("QLabel{font-size:10px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
         rl->addWidget(nm, 1);
 
@@ -2249,14 +2257,16 @@ QWidget* ParkingWidget::createHomePage()
     cL->addLayout(statsRow);
 
     // ══════════════════════════════════════════
-    //  MANEUVER GRID (2 columns)
+    //  MANEUVER GRID — 3 maneuvers only
+    //  Order: Marche Avant(4), Créneau(0), Marche Arrière(3)
     // ══════════════════════════════════════════
     QGridLayout *grid = new QGridLayout();
     grid->setSpacing(14);
     m_masteryBars.clear();
     m_masteryPcts.clear();
-    for(int i = 0; i < 5; i++){
-        grid->addWidget(createManeuverCard(i), i / 2, i % 2);
+    static const int SHOWN_MANEUVERS[] = {4, 0, 3};
+    for(int gi = 0; gi < 3; gi++){
+        grid->addWidget(createManeuverCard(SHOWN_MANEUVERS[gi]), gi / 2, gi % 2);
     }
     cL->addLayout(grid);
 
@@ -2363,7 +2373,7 @@ QWidget* ParkingWidget::createManeuverCard(int index)
         QString::fromUtf8("Perpendicular parking"),
         QString::fromUtf8("Diagonal parking"),
         QString::fromUtf8("Reverse in straight line"),
-        QString::fromUtf8("3-point turn")
+        QString::fromUtf8("Forward straight line")
     };
     QStringList grads = {
         "stop:0 #00b894,stop:1 #55efc4",
@@ -3770,6 +3780,13 @@ void ParkingWidget::openManeuver(int idx)
 
 void ParkingWidget::showChecklistThenStart()
 {
+    // RFID auto-start: bypass checklist dialog entirely → start immediately
+    if (m_rfidAutoStart) {
+        m_rfidAutoStart = false;
+        startSession();
+        return;
+    }
+
     // In full exam mode, only show the safety checklist at the very start (fwd = phase 0).
     // For subsequent maneuvers (creneau, demi-tour, marche_arriere) skip directly to session.
     if (m_fullExamMode && m_fullExamPhase > 0) {
@@ -3927,10 +3944,14 @@ void ParkingWidget::startSession()
 
     showFloatingMessage(QString::fromUtf8("\xf0\x9f\x9a\x80 Session started!"), "#00b894");
 
-    // Show Arduino status hint in session log (clear first — avoid accumulating across sessions)
+    // Show Arduino status hint in session log.
+    // If RFID auto-start already connected HC-05, preserve those messages (don't clear).
+    // Use m_maquetteConnected (m_sensorMgr) — m_arduinoSerial is never opened anymore.
     if (m_sessionArduinoLog) {
-        m_sessionArduinoLog->clear();
-        bool connected = m_arduinoSerial && m_arduinoSerial->isOpen();
+        if (!m_maquetteConnected) {
+            m_sessionArduinoLog->clear();   // only clear when HC-05 not yet connected
+        }
+        bool connected = m_maquetteConnected;
         QString hint = connected
             ? QString::fromUtf8("<span style='color:#55efc4;font-weight:bold;'>"
                                 "\xf0\x9f\x93\xa1 HC-05 connect\xc3\xa9 \xe2\x80\x94 "
@@ -4023,8 +4044,15 @@ void ParkingWidget::endSession()
     if(m_examMode && m_sessionSeconds > 180) success = false;
     int score = calculateScore(success);
 
+    // ── Best score check: compare with student's previous best for this maneuver ──
+    QString manType = m_maneuverDbKeys[m_currentManeuver];
+    int prevBest = ParkingDBManager::instance().getBestScore(m_currentEleveId, manType);
+    bool isNewBest = (score > prevBest);
+
+    // Save to DB: score, completion_time (MM:SS) and parking_type = "Parking"
     ParkingDBManager::instance().endSession(m_currentSessionId, success,
-        m_sessionSeconds, m_currentStep, m_nbErrors, m_nbCalages, m_contactObstacle);
+        m_sessionSeconds, m_currentStep, m_nbErrors, m_nbCalages, m_contactObstacle,
+        score, QString("Parking"));
 
     // Save exam result if in exam mode
     if (m_examMode) {
@@ -4034,7 +4062,6 @@ void ParkingWidget::endSession()
         else if (m_nbCalages >= 2) fauteElim = QString::fromUtf8("Excessive stalls (%1)").arg(m_nbCalages);
         else if (m_sessionSeconds > 180) fauteElim = QString::fromUtf8("Time exceeded");
 
-        QString manType = m_maneuverDbKeys[m_currentManeuver];
         ParkingDBManager::instance().saveResultatExamen(
             m_currentEleveId, manType, m_sessionSeconds, success,
             scoreSur20, m_nbErrors, fauteElim, "");
@@ -4067,13 +4094,39 @@ void ParkingWidget::endSession()
         QString::fromUtf8("Session ended. Score %1 out of 100. %2 errors, %3 stalls.")
             .arg(score).arg(m_nbErrors).arg(m_nbCalages));
 
-    m_scoreLabel->setText(QString("Score: %1/100").arg(score));
+    // ── Format time (mm:ss) for completion display ────────────────────────────
+    QString completionTime = QString("%1:%2")
+        .arg(m_sessionSeconds / 60, 2, 10, QChar('0'))
+        .arg(m_sessionSeconds % 60, 2, 10, QChar('0'));
+
+    // ── Score label — show score + completion time + new best badge ──────────
     QString atttGrade = score >= 80 ? "A" : score >= 50 ? "B" : "C";
-    QString scCol = score >= 80 ? "#00b894" : score >= 50 ? "#fdcb6e" : "#e17055";
+    QString scCol     = score >= 80 ? "#00b894" : score >= 50 ? "#fdcb6e" : "#e17055";
+    QString bestBadge = isNewBest ? QString::fromUtf8(" \xf0\x9f\x8f\x86 Meilleur!") : "";
+    m_scoreLabel->setText(QString("Score: %1/100%2").arg(score).arg(bestBadge));
     m_scoreLabel->setStyleSheet(QString("QLabel{font-size:16px;font-weight:bold;color:%1;"
         "background:transparent;border:none;}").arg(scCol));
-    m_errorsLabel->setText(QString::fromUtf8("ATTT Grade: %1  \xc2\xb7  Errors: %2  \xc2\xb7  Stalls: %3")
-        .arg(atttGrade).arg(m_nbErrors).arg(m_nbCalages));
+    m_errorsLabel->setText(
+        QString::fromUtf8("ATTT Grade: %1  \xc2\xb7  Errors: %2  \xc2\xb7  Stalls: %3  \xc2\xb7  \xe2\x8f\xb1 %4")
+        .arg(atttGrade).arg(m_nbErrors).arg(m_nbCalages).arg(completionTime));
+
+    // Show "new best" floating banner if student improved
+    if (isNewBest && score > 0) {
+        showFloatingMessage(
+            QString::fromUtf8("\xf0\x9f\x8f\x86 Nouveau record ! %1/100 \xe2\x80\x94 %2")
+                .arg(score).arg(completionTime),
+            "#6c5ce7");
+    }
+
+    // Also update the terminal log with final score + time
+    if (m_sessionArduinoLog) {
+        m_sessionArduinoLog->append(QString::fromUtf8(
+            "<span style='color:#55efc4;font-weight:bold;font-size:12px;'>"
+            "\xf0\x9f\x8f\x81 Session termin\xc3\xa9e \xe2\x80\x94 Score: %1/100 "
+            "\xe2\x80\x94 Temps: %2%3</span>")
+            .arg(score).arg(completionTime)
+            .arg(isNewBest ? QString::fromUtf8(" \xf0\x9f\x8f\x86") : ""));
+    }
 
     m_nextBtn->setVisible(false);
     m_endBtn->setVisible(false);
@@ -4096,22 +4149,21 @@ void ParkingWidget::endSession()
     if (m_fullExamMode) {
         m_fullExamScores.append(score);
         m_fullExamSuccess.append(success);
-        if (m_fullExamPhase < 3) {
+        if (m_fullExamPhase < 2) {
             m_fullExamPhase++;
-            static const int FULL_EXAM_SEQ[] = {5, 0, 4, 3};
+            static const int FULL_EXAM_SEQ[] = {4, 0, 3};
             QString nextName;
             switch(FULL_EXAM_SEQ[m_fullExamPhase]){
-                case 5: nextName = QString::fromUtf8("Forward Corridor"); break;
+                case 4: nextName = QString::fromUtf8("Marche Avant"); break;
                 case 0: nextName = QString::fromUtf8("Cr\xc3\xa9neau"); break;
-                case 4: nextName = QString::fromUtf8("Demi-tour"); break;
                 case 3: nextName = QString::fromUtf8("Marche arri\xc3\xa8re"); break;
                 default: nextName = "Next"; break;
             }
             showFloatingMessage(
-                QString::fromUtf8("\xf0\x9f\x8e\xaf Phase %1/4 done! \xe2\x86\x92 %2")
+                QString::fromUtf8("\xf0\x9f\x8e\xaf Phase %1/3 done! \xe2\x86\x92 %2")
                     .arg(m_fullExamPhase).arg(nextName), "#6c5ce7");
             QTimer::singleShot(1800, this, [this](){
-                static const int seq[] = {5, 0, 4, 3};
+                static const int seq[] = {4, 0, 3};
                 openManeuver(seq[m_fullExamPhase]);
             });
         } else {
@@ -4326,8 +4378,8 @@ void ParkingWidget::openFullExam()
     m_fullExamPhase = 0;
     m_fullExamScores.clear();
     m_fullExamSuccess.clear();
-    // Sequence: Marche avant (5) → Créneau (0) → Demi-tour (4) → Marche arrière (3)
-    static const int FULL_EXAM_SEQ[] = {5, 0, 4, 3};
+    // Sequence: Marche Avant (4) → Créneau (0) → Marche arrière (3)
+    static const int FULL_EXAM_SEQ[] = {4, 0, 3};
     openManeuver(FULL_EXAM_SEQ[0]);
 }
 
@@ -4360,12 +4412,12 @@ QWidget* ParkingWidget::createFullExamCard()
 
     QVBoxLayout *titleText = new QVBoxLayout();
     titleText->setSpacing(3);
-    QLabel *title = new QLabel(QString::fromUtf8("Full ATTT Exam"), card);
+    QLabel *title = new QLabel(QString::fromUtf8("Parking"), card);
     title->setStyleSheet("QLabel{font-size:18px;font-weight:bold;color:white;"
         "background:transparent;border:none;}");
     titleText->addWidget(title);
     QLabel *sub = new QLabel(QString::fromUtf8(
-        "4 maneuvers in sequence — real exam conditions"), card);
+        "3 maneuvers in sequence — Start Parking"), card);
     sub->setStyleSheet("QLabel{font-size:10px;color:rgba(255,255,255,0.8);"
         "background:transparent;border:none;}");
     titleText->addWidget(sub);
@@ -4378,14 +4430,13 @@ QWidget* ParkingWidget::createFullExamCard()
 
     l->addLayout(titleRow);
 
-    // 4-step sequence pills
+    // 3-step sequence pills
     QHBoxLayout *seqRow = new QHBoxLayout();
     seqRow->setSpacing(8);
     QStringList phases = {
-        QString::fromUtf8("\xe2\xac\x86\xef\xb8\x8f Fwd Corridor"),
+        QString::fromUtf8("\xe2\xac\x86\xef\xb8\x8f Marche Avant"),
         QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Cr\xc3\xa9neau"),
-        QString::fromUtf8("\xf0\x9f\x94\x84 Demi-tour"),
-        QString::fromUtf8("\xe2\xac\x87\xef\xb8\x8f Marche AR")
+        QString::fromUtf8("\xe2\xac\x87\xef\xb8\x8f Marche arri\xc3\xa8re")
     };
     for(int i = 0; i < phases.size(); i++){
         QLabel *pill = new QLabel(QString("%1. %2").arg(i+1).arg(phases[i]), card);
@@ -4401,9 +4452,9 @@ QWidget* ParkingWidget::createFullExamCard()
     m_fullExamLockLabel->setWordWrap(true);
     m_fullExamLockLabel->setAlignment(Qt::AlignCenter);
     m_fullExamLockLabel->setText(
-        QString::fromUtf8("\xf0\x9f\x94\x92  Examen verrouill\xc3\xa9\n"
-                          "Vous devez r\xc3\xa9server votre examen via l'onglet Sessions,\n"
-                          "et l'acc\xc3\xa8s sera d\xc3\xa9verrouill\xc3\xa9 le jour exact de votre examen."));
+        QString::fromUtf8("\xf0\x9f\x94\x92  Parking Locked\n"
+                          "You must book your exam via the Sessions tab.\n"
+                          "Access will be unlocked on the exact day of your exam."));
     m_fullExamLockLabel->setStyleSheet(
         "QLabel{font-size:11px;color:rgba(255,255,255,0.9);"
         "background:rgba(0,0,0,0.25);border-radius:12px;"
@@ -4414,7 +4465,7 @@ QWidget* ParkingWidget::createFullExamCard()
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->addStretch();
     m_fullExamStartBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x9a\x80  D\xc3\xa9marrer l'examen  \xe2\x86\x92"), card);
+        QString::fromUtf8("\xf0\x9f\x9a\x80  Start Parking  \xe2\x86\x92"), card);
     m_fullExamStartBtn->setFixedHeight(42);
     m_fullExamStartBtn->setCursor(Qt::PointingHandCursor);
     m_fullExamStartBtn->setStyleSheet(
@@ -4429,154 +4480,11 @@ QWidget* ParkingWidget::createFullExamCard()
     m_fullExamStartBtn->setVisible(true);
     m_fullExamLockLabel->setVisible(false);
 
-    // ── Arduino HC-05 Bluetooth Monitor ─────────────────────────────────────
-    QFrame *btPanel = new QFrame(card);
-    btPanel->setStyleSheet(
-        "QFrame{background:rgba(0,0,0,0.22);border-radius:14px;border:none;}");
-    QVBoxLayout *btL = new QVBoxLayout(btPanel);
-    btL->setContentsMargins(14, 12, 14, 12);
-    btL->setSpacing(8);
-
-    // Title row
-    QHBoxLayout *btTitleRow = new QHBoxLayout();
-    QLabel *btIcon = new QLabel(QString::fromUtf8("\xf0\x9f\x93\xa1"));
-    btIcon->setStyleSheet("font-size:18px;background:transparent;");
-    QLabel *btTitle = new QLabel("Arduino HC-05 Monitor");
-    btTitle->setStyleSheet("font-size:13px;font-weight:bold;color:white;background:transparent;");
-    m_btStatusLbl = new QLabel(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
-    m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
-    btTitleRow->addWidget(btIcon);
-    btTitleRow->addWidget(btTitle);
-    btTitleRow->addStretch();
-    btTitleRow->addWidget(m_btStatusLbl);
-    btL->addLayout(btTitleRow);
-
-    // Port selector + connect button row
-    QHBoxLayout *btCtrlRow = new QHBoxLayout();
-    btCtrlRow->setSpacing(8);
-
-    m_btPortCombo = new QComboBox();
-    m_btPortCombo->setFixedHeight(32);
-    m_btPortCombo->setStyleSheet(
-        "QComboBox{background:rgba(255,255,255,0.15);color:white;border:1px solid rgba(255,255,255,0.3);"
-        "border-radius:8px;padding:4px 10px;font-size:12px;}"
-        "QComboBox::drop-down{border:none;}"
-        "QComboBox QAbstractItemView{background:#2d3436;color:white;}");
-    // Populate available ports
-    for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
-        m_btPortCombo->addItem(info.portName());
-    if (m_btPortCombo->count() == 0)
-        m_btPortCombo->addItem("COM3");
-
-    QPushButton *refreshBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x84"));
-    refreshBtn->setFixedSize(32, 32);
-    refreshBtn->setToolTip("Refresh ports");
-    refreshBtn->setStyleSheet(
-        "QPushButton{background:rgba(255,255,255,0.15);color:white;border:none;"
-        "border-radius:8px;font-size:14px;}"
-        "QPushButton:hover{background:rgba(255,255,255,0.25);}");
-    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
-        m_btPortCombo->clear();
-        for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts())
-            m_btPortCombo->addItem(info.portName());
-        if (m_btPortCombo->count() == 0) m_btPortCombo->addItem("COM3");
-    });
-
-    m_btConnectBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
-    m_btConnectBtn->setFixedHeight(32);
-    m_btConnectBtn->setCursor(Qt::PointingHandCursor);
-    m_btConnectBtn->setStyleSheet(
-        "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
-        "font-size:12px;font-weight:bold;padding:0 14px;}"
-        "QPushButton:hover{background:#00a381;}");
-    connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
-        if (m_arduinoSerial && m_arduinoSerial->isOpen()) {
-            // Disconnect
-            m_arduinoSerial->close();
-            m_btStatusLbl->setText(QString::fromUtf8("\xe2\x97\x8f  Non connect\xc3\xa9"));
-            m_btStatusLbl->setStyleSheet("font-size:11px;color:#ff7675;background:transparent;");
-            m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x97  Connecter"));
-            m_btConnectBtn->setStyleSheet(
-                "QPushButton{background:#00b894;color:white;border:none;border-radius:8px;"
-                "font-size:12px;font-weight:bold;padding:0 14px;}"
-                "QPushButton:hover{background:#00a381;}");
-            if (m_arduinoLog)
-                m_arduinoLog->append(QString::fromUtf8(
-                    "<span style='color:#ff7675;'>&#9679; D\xc3\xa9connect\xc3\xa9</span>"));
-            // Mirror state to session page panel
-            syncSessionBtUI();
-        } else {
-            // Connect
-            if (!m_arduinoSerial) {
-                m_arduinoSerial = new QSerialPort(this);
-                connect(m_arduinoSerial, &QSerialPort::readyRead,
-                        this, &ParkingWidget::onArduinoDataReady);
-            }
-            QString port = m_btPortCombo->currentText();
-            // If m_sensorMgr already has this port open, don't open a second handle
-            if (m_sensorMgr && m_sensorMgr->currentPort() == port && m_sensorMgr->isConnected()) {
-                m_btStatusLbl->setText(
-                    QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
-                m_btStatusLbl->setStyleSheet("font-size:11px;color:#55efc4;background:transparent;");
-                if (m_arduinoLog)
-                    m_arduinoLog->append(QString::fromUtf8(
-                        "<span style='color:#55efc4;'>&#9679; Shared with SensorMgr \xe2\x80\x94 ")
-                        + port + "</span>");
-                syncSessionBtUI();
-                return;
-            }
-            m_arduinoSerial->setPortName(port);
-            m_arduinoSerial->setBaudRate(QSerialPort::Baud9600);
-            m_arduinoSerial->setDataBits(QSerialPort::Data8);
-            m_arduinoSerial->setParity(QSerialPort::NoParity);
-            m_arduinoSerial->setStopBits(QSerialPort::OneStop);
-            m_arduinoSerial->setFlowControl(QSerialPort::NoFlowControl);
-
-            if (m_arduinoSerial->open(QIODevice::ReadOnly)) {
-                m_btStatusLbl->setText(
-                    QString::fromUtf8("\xe2\x97\x8f  Connect\xc3\xa9 \xe2\x80\x94 ") + port);
-                m_btStatusLbl->setStyleSheet(
-                    "font-size:11px;color:#55efc4;background:transparent;");
-                m_btConnectBtn->setText(QString::fromUtf8("\xf0\x9f\x94\x98  D\xc3\xa9connecter"));
-                m_btConnectBtn->setStyleSheet(
-                    "QPushButton{background:#e17055;color:white;border:none;border-radius:8px;"
-                    "font-size:12px;font-weight:bold;padding:0 14px;}"
-                    "QPushButton:hover{background:#d05f3f;}");
-                if (m_arduinoLog)
-                    m_arduinoLog->append(QString::fromUtf8(
-                        "<span style='color:#55efc4;'>&#9679; Connect\xc3\xa9 sur ")
-                        + port + "</span>");
-                // Mirror state to session page panel
-                syncSessionBtUI();
-            } else {
-                m_btStatusLbl->setText(QString::fromUtf8("\xe2\x9c\x96  Erreur: ")
-                    + m_arduinoSerial->errorString());
-                m_btStatusLbl->setStyleSheet(
-                    "font-size:11px;color:#ff7675;background:transparent;");
-            }
-        }
-    });
-
-    btCtrlRow->addWidget(m_btPortCombo, 1);
-    btCtrlRow->addWidget(refreshBtn);
-    btCtrlRow->addWidget(m_btConnectBtn);
-    btL->addLayout(btCtrlRow);
-
-    // Message log
-    m_arduinoLog = new QTextEdit();
-    m_arduinoLog->setReadOnly(true);
-    m_arduinoLog->setFixedHeight(180);
-    m_arduinoLog->setStyleSheet(
-        "QTextEdit{background:rgba(0,0,0,0.35);color:#dfe6e9;border:none;"
-        "border-radius:10px;padding:8px;font-family:'Courier New';font-size:11px;}"
-        "QScrollBar:vertical{background:rgba(255,255,255,0.05);width:6px;border-radius:3px;}"
-        "QScrollBar::handle:vertical{background:rgba(255,255,255,0.2);border-radius:3px;}");
-    m_arduinoLog->setPlaceholderText(
-        QString::fromUtf8("En attente de connexion HC-05...\n"
-                          "S\xc3\xa9lectionnez le port COM et cliquez Connecter."));
-    btL->addWidget(m_arduinoLog);
-
-    l->addWidget(btPanel);
+    // HC-05 Monitor removed — connection handled automatically via RFID / session page
+    m_arduinoLog     = nullptr;
+    m_btStatusLbl    = nullptr;
+    m_btConnectBtn   = nullptr;
+    m_btPortCombo    = nullptr;
 
     return card;
 }
@@ -4591,7 +4499,7 @@ void ParkingWidget::showFullExamResults()
         if(m_fullExamSuccess.value(i, false)) passed++;
     }
     int combined = m_fullExamScores.isEmpty() ? 0 : totalScore / m_fullExamScores.size();
-    bool overallPass = (passed == 4);
+    bool overallPass = (passed == 3);
 
     // Save combined result to local SQLite DB
     ParkingDBManager::instance().saveResultatExamen(
@@ -4670,14 +4578,13 @@ void ParkingWidget::showFullExamResults()
     bdTitle->setStyleSheet("QLabel{font-size:13px;font-weight:bold;color:#2d3436;}");
     bdl->addWidget(bdTitle);
 
-    static const int FULL_EXAM_SEQ[] = {5, 0, 4, 3};
+    static const int FULL_EXAM_SEQ[] = {4, 0, 3};
     QStringList phaseNames = {
-        QString::fromUtf8("\xe2\xac\x86\xef\xb8\x8f Forward Corridor"),
-        QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Cr\xc3\xa9neau (Parallel)"),
-        QString::fromUtf8("\xf0\x9f\x94\x84 Demi-tour (U-turn)"),
-        QString::fromUtf8("\xe2\xac\x87\xef\xb8\x8f Marche arri\xc3\xa8re (Reverse)")
+        QString::fromUtf8("\xe2\xac\x86\xef\xb8\x8f Marche Avant"),
+        QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Cr\xc3\xa9neau"),
+        QString::fromUtf8("\xe2\xac\x87\xef\xb8\x8f Marche arri\xc3\xa8re")
     };
-    for(int i = 0; i < 4 && i < m_fullExamScores.size(); i++){
+    for(int i = 0; i < 3 && i < m_fullExamScores.size(); i++){
         QHBoxLayout *row = new QHBoxLayout();
         QLabel *nm = new QLabel(phaseNames[i], breakdown);
         nm->setStyleSheet("QLabel{font-size:11px;color:#2d3436;}");
@@ -5396,13 +5303,28 @@ void ParkingWidget::stopHc05Retry()
 
 void ParkingWidget::onConnectionChanged(bool connected)
 {
+    // Guard: only act when state actually changes
+    if (connected == m_maquetteConnected) return;
+
     m_maquetteConnected = connected;
     if(connected){
         m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x9f\xa2 Connected"));
         m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#00b894;background:#e8f8f5;"
             "border-radius:8px;padding:3px 8px;border:none;}");
-        showFloatingMessage(QString::fromUtf8(
-            "\xf0\x9f\x9f\xa2 Model connected!"), "#00b894");
+
+        // Append status — NEVER clear() so Arduino step messages stay visible
+        if (m_sessionArduinoLog) {
+            m_sessionArduinoLog->append(QString::fromUtf8(
+                "<span style='color:#a29bfe;font-weight:bold;'>"
+                "\xf0\x9f\x8e\xab RFID d\xc3\xa9tect\xc3\xa9 \xe2\x80\x94 "
+                "D\xc3\xa9marrage automatique."
+                "</span>"));
+            m_sessionArduinoLog->append(QString::fromUtf8(
+                "<span style='color:#00b894;font-weight:bold;'>"
+                "\xf0\x9f\x9f\xa2 HC-05 connect\xc3\xa9 \xe2\x80\x94 "
+                "auto-avance activ\xc3\xa9e."
+                "</span>"));
+        }
     } else {
         m_connStatus->setText(QString::fromUtf8("\xf0\x9f\x94\xb4 Disconnected"));
         m_connStatus->setStyleSheet("QLabel{font-size:9px;color:#e17055;background:#fef3e2;"
@@ -5962,22 +5884,24 @@ void ParkingWidget::appendArduinoMessage(const QString &line)
     QString html;
 
     // ── Color coding matched to Arduino state machine ────────────────────────
+    //  Arduino states:  FORWARD → TURN_LEFT → STEP3_FORWARD → REV_RIGHT → REV_LEFT → PARKED
     //
-    //  PARKED transition  ✅ PARKING COMPLETE!       → gold
-    //  REV_LEFT transition!! POSITION OK !!          → green (confirmed position)
-    //  REV_RIGHT          PHASE 5: REVERSE…          → purple
-    //  STEP3→REV_RIGHT    !! EXTREMITY REACHED !!    → red warning
-    //  STEP3 active       PHASE 4: REVERSE…          → orange
-    //  STEP2→STEP3        GO STRAIGHT / Watch right… → teal instruction
-    //  TURN_LEFT active   STEP 2: R:Xcm              → blue sensor
-    //  STEP3 active       STEP 3: Barrier 4 / STRAIGHT → blue
-    //  FORWARD active     STEP 1: MOVING FORWARD     → teal header
-    //  !! STOP !!         (barrier reached)          → red alert
-    //  >> REVERSE… <<     (sub-instruction)          → orange
-    //  TURN RIGHT…        (driver instruction)       → yellow
-    //  Waiting Xs / count (debug/countdown)          → dim
-    //  Sensor lines F: R: BR: BL:                    → dim small
-    //  Calibrating / Gyro / Waking                   → italic dim
+    //  PARKED            PARKING COMPLETE!            → gold
+    //  REV_LEFT          !! POSITION OK !!            → green
+    //  REV_LEFT active   PHASE 5: REVERSE+WHEEL LEFT  → purple
+    //  REV_RIGHT active  PHASE 4: REVERSE+WHEEL RIGHT → orange
+    //  STEP3→REV_RIGHT   !! EXTREMITY REACHED !!      → red
+    //  STEP2→STEP3       GO STRAIGHT / Watch right    → teal
+    //  STEP3 active      STEP 3: Barrier 4…           → blue
+    //  TURN_LEFT active  STEP 2: R:Xcm                → blue
+    //  FORWARD active    STEP 1: MOVING FORWARD       → teal
+    //  !! STOP !!        (barrier reached)            → red
+    //  STOP              (sub-line after !! msg)      → red dim
+    //  >> REVERSE… <<    (driver sub-instruction)     → orange
+    //  TURN RIGHT/LEFT   (driver instruction)         → yellow
+    //  confirmed / count / wait                       → dim italic
+    //  F: R: BR: BL:     (sensor data)                → dim small
+    //  Calibrating / Gyro / Waking / Lost count       → italic dim
 
     if (lw.contains("parking complete")) {
         html = QString("<span style='color:#55efc4;font-weight:bold;font-size:13px;'>&#127942; %1</span>").arg(esc);
@@ -5999,6 +5923,8 @@ void ParkingWidget::appendArduinoMessage(const QString &line)
         html = QString("<span style='color:#00cec9;font-weight:bold;font-size:12px;'>&#128280; %1</span>").arg(esc);
     } else if (lw.startsWith("!! stop !!")) {
         html = QString("<span style='color:#ff7675;font-weight:bold;font-size:12px;'>&#9888; %1</span>").arg(esc);
+    } else if (lw == "stop") {
+        html = QString("<span style='color:#ff7675;font-weight:bold;'>&#9632; STOP</span>");
     } else if (lw.startsWith("!!")) {
         html = QString("<span style='color:#ff7675;font-weight:bold;'>&#9888; %1</span>").arg(esc);
     } else if (lw.startsWith(">> ")) {
@@ -6642,15 +6568,17 @@ QWidget* ParkingWidget::createAnalyticsPage()
     mTitle->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;background:transparent;border:none;}");
     ml->addWidget(mTitle);
 
-    QStringList manNames = {"Parallel", "Perpendicular", "Diagonal",
-                            "Reverse", "U-turn"};
-    QStringList colors = {"#00b894", "#0984e3", "#6c5ce7", "#e17055", "#fdcb6e"};
+    // Show only the 3 active maneuvers: Marche Avant(4), Creneau(0), Marche Arriere(3)
+    static const int ACTIVE_IDX[] = {4, 0, 3};
+    QStringList manNames = {"Marche Avant", "Cr\xc3\xa9neau", "Marche arri\xc3\xa8re"};
+    QStringList colors = {"#fdcb6e", "#00b894", "#e17055"};
 
-    for (int i = 0; i < m_maneuverNames.size() && i < manNames.size(); i++) {
+    for (int gi = 0; gi < 3; gi++) {
+        int i = ACTIVE_IDX[gi];
         QHBoxLayout *row = new QHBoxLayout();
         row->setSpacing(10);
 
-        QLabel *nm = new QLabel(manNames[i], masteryCard);
+        QLabel *nm = new QLabel(manNames[gi], masteryCard);
         nm->setFixedWidth(120);
         nm->setStyleSheet("QLabel{font-size:11px;color:#2d3436;font-weight:600;background:transparent;border:none;}");
         row->addWidget(nm);
@@ -6665,14 +6593,14 @@ QWidget* ParkingWidget::createAnalyticsPage()
         bar->setFixedHeight(10);
         bar->setStyleSheet(QString(
             "QProgressBar{background:#f0f0f0;border-radius:5px;border:none;}"
-            "QProgressBar::chunk{background:%1;border-radius:5px;}").arg(colors[i]));
+            "QProgressBar::chunk{background:%1;border-radius:5px;}").arg(colors[gi]));
         row->addWidget(bar, 1);
 
         QLabel *pctLabel = new QLabel(QString("%1%").arg(pct), masteryCard);
         pctLabel->setFixedWidth(40);
         pctLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         pctLabel->setStyleSheet(QString("QLabel{font-size:11px;font-weight:bold;color:%1;"
-            "background:transparent;border:none;}").arg(colors[i]));
+            "background:transparent;border:none;}").arg(colors[gi]));
         row->addWidget(pctLabel);
 
         QLabel *detail = new QLabel(QString("%1/%2").arg(successes).arg(attempts), masteryCard);
@@ -6847,6 +6775,12 @@ void ParkingWidget::showSessionReplay(int sessionId)
     int errors = session["nb_erreurs"].toInt();
     int calages = session["nb_calages"].toInt();
     QString manType = session["manoeuvre_type"].toString();
+    // Resolve DB key → friendly name
+    QString manDisplay = manType;
+    for(int i = 0; i < m_maneuverDbKeys.size(); i++){
+        if(m_maneuverDbKeys[i] == manType){ manDisplay = m_maneuverNames[i]; break; }
+    }
+    if(manType == "demi_tour") manDisplay = QString::fromUtf8("Marche Avant"); // legacy
 
     QString msg = QString::fromUtf8(
         "<h3>%1 Session #%2</h3>"
@@ -6856,7 +6790,7 @@ void ParkingWidget::showSessionReplay(int sessionId)
         "<p><b>Errors:</b> %7 · <b>Stalls:</b> %8</p>")
         .arg(ok ? QString::fromUtf8("✅") : QString::fromUtf8("❌"))
         .arg(sessionId)
-        .arg(manType)
+        .arg(manDisplay)
         .arg(dur/60).arg(dur%60, 2, 10, QChar('0'))
         .arg(ok ? QString::fromUtf8("Passed") : QString::fromUtf8("Failed"))
         .arg(errors).arg(calages);
@@ -7529,7 +7463,7 @@ void ParkingWidget::initVideoTutorials()
 
     // Clés dans le même ordre que m_maneuverNames
     static const QStringList keys = {
-        "creneau", "bataille", "epi", "marche_arriere", "demi_tour"
+        "creneau", "bataille", "epi", "marche_arriere", "marche_avant"
     };
 
     if (!ParkingDBManager::instance().isConnected()) return;
@@ -7825,17 +7759,18 @@ QWidget* ParkingWidget::createPerformanceTrendCard()
     {
         QHBoxLayout *barsRow = new QHBoxLayout();
         barsRow->setSpacing(6);
+        // Only 3 active maneuvers: Marche Avant(4), Creneau(0), Marche Arriere(3)
+        static const int BAR_IDX[] = {4, 0, 3};
         QStringList shortNames = {
-            QString::fromUtf8("Par."),
-            QString::fromUtf8("Perp."),
-            QString::fromUtf8("Diag."),
-            QString::fromUtf8("Rev."),
-            QString::fromUtf8("U-turn")
+            QString::fromUtf8("M.Avant"),
+            QString::fromUtf8("Creneau"),
+            QString::fromUtf8("M.Arr.")
         };
-        QStringList barColors = {"#00b894","#0984e3","#6c5ce7","#e17055","#fdcb6e"};
-        for (int i = 0; i < 5 && i < m_maneuverAttemptCounts.size(); i++) {
-            int att = m_maneuverAttemptCounts[i];
-            int suc = m_maneuverSuccessCounts[i];
+        QStringList barColors = {"#fdcb6e","#00b894","#e17055"};
+        for (int gi = 0; gi < 3; gi++) {
+            int i = BAR_IDX[gi];
+            int att = m_maneuverAttemptCounts.value(i, 0);
+            int suc = m_maneuverSuccessCounts.value(i, 0);
             int pctM = att > 0 ? (suc * 100 / att) : 0;
 
             QVBoxLayout *col = new QVBoxLayout();
@@ -7849,11 +7784,11 @@ QWidget* ParkingWidget::createPerformanceTrendCard()
             bar->setTextVisible(false);
             bar->setStyleSheet(
                 QString("QProgressBar{background:#f0f2f5;border-radius:3px;border:none;}"
-                        "QProgressBar::chunk{background:%1;border-radius:3px;}").arg(barColors[i]));
+                        "QProgressBar::chunk{background:%1;border-radius:3px;}").arg(barColors[gi]));
             col->addWidget(bar);
 
             QLabel *nm = new QLabel(
-                QString("%1\n%2%").arg(shortNames[i]).arg(pctM), card);
+                QString("%1\n%2%").arg(shortNames[gi]).arg(pctM), card);
             nm->setAlignment(Qt::AlignCenter);
             nm->setStyleSheet(
                 "QLabel{font-size:8px;color:#636e72;background:transparent;border:none;}");
@@ -8501,6 +8436,9 @@ void ParkingWidget::connectLcdPort()
         if (m_lcdPort->open(QIODevice::ReadWrite)) {
             qDebug() << "[LCD] Connected to" << info.portName()
                      << "(" << info.description() << ")";
+            // Hook up incoming data → RFID detection (UniqueConnection avoids duplicates on retry)
+            connect(m_lcdPort, &QSerialPort::readyRead,
+                    this, &ParkingWidget::onLcdDataReady, Qt::UniqueConnection);
             if (m_lcdStatus) {
                 m_lcdStatus->setText(QString::fromUtf8("\xf0\x9f\x9f\xa2 LCD"));
                 m_lcdStatus->setStyleSheet("QLabel{font-size:9px;color:#00b894;background:#e8f8f5;"
@@ -8582,4 +8520,70 @@ void ParkingWidget::sendToLcd(const QString &cmd)
     m_lcdPort->write((cmd + "\n").toUtf8());
     m_lcdPort->flush();
     qDebug() << "[LCD] Sent:" << cmd;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  RFID auto-start — called whenever data arrives on m_lcdPort
+//  Arduino sends lines like:  "UID: AB CD EF 12"  or  "Card UID: ABCDEF12"
+//  When a valid RFID scan is detected and no session is running,
+//  the parking session starts automatically (opens maneuver + checklist).
+// ─────────────────────────────────────────────────────────────────────
+void ParkingWidget::onLcdDataReady()
+{
+    m_lcdBuffer += QString::fromUtf8(m_lcdPort->readAll());
+
+    while (m_lcdBuffer.contains('\n')) {
+        int idx = m_lcdBuffer.indexOf('\n');
+        QString line = m_lcdBuffer.left(idx).trimmed();
+        m_lcdBuffer.remove(0, idx + 1);
+        if (line.isEmpty()) continue;
+
+        qDebug() << "[LCD-RX]" << line;
+
+        // LCD Arduino only RECEIVES commands (T:, S:, RESET...) — it never sends back.
+        // Any incoming line = RFID card scanned. Use 3 s cooldown to avoid double-trigger.
+        static QElapsedTimer rfidCooldown;
+        if (rfidCooldown.isValid() && rfidCooldown.elapsed() < 3000)
+            continue;
+        rfidCooldown.restart();
+
+        qDebug() << "[RFID] Card scanned";
+
+        if (!m_sessionActive) {
+            // ── Start session ──
+            m_rfidAutoStart = true;
+
+            // Connect HC-05 IMMEDIATELY so Arduino step messages are received
+            // before startSession() runs (startSession runs at 800+300=1100ms).
+            // If HC-05 is already connected, skip.
+            if (!m_maquetteConnected) {
+                qDebug() << "[RFID] Connecting HC-05 COM3 immediately";
+                bool ok = m_sensorMgr->connectToPort("COM3");
+                if (ok) {
+                    stopHc05Retry();
+                    // onConnectionChanged fires via connected() signal from connectToPort
+                } else {
+                    startHc05Retry();
+                }
+            }
+
+            QTimer::singleShot(800, this, [this]{
+                if (!m_sessionActive)
+                    openManeuver(m_currentManeuver);
+            });
+
+        } else {
+            // ── Session running — just connect HC-05 if needed ──
+            if (!m_maquetteConnected) {
+                qDebug() << "[RFID] Connecting HC-05 COM3 (session active)";
+                bool ok = m_sensorMgr->connectToPort("COM3");
+                if (ok) {
+                    stopHc05Retry();
+                    onConnectionChanged(true);   // sets m_maquetteConnected + updates log
+                } else {
+                    startHc05Retry();
+                }
+            }
+        }
+    }
 }

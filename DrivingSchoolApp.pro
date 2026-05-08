@@ -16,7 +16,8 @@ SOURCES += \
     database.cpp \
     emailservice.cpp \
     smartdrivewindow.cpp \
-    studentlearninghub.cpp
+    studentlearninghub.cpp \
+    parcourcircuitwidget.cpp
 
 HEADERS += \
     mainwindow.h \
@@ -28,7 +29,8 @@ HEADERS += \
     database.h \
     emailservice.h \
     smartdrivewindow.h \
-    studentlearninghub.h
+    studentlearninghub.h \
+    parcourcircuitwidget.h
 
 # ── TACHE learning module sources (shared, not copied) ───────────────────────
 SOURCES += \
@@ -165,6 +167,9 @@ FORMS += \
 RESOURCES += \
     assets.qrc \
     tache_resources.qrc
+
+# Force-link the JPEG image plugin so circuit photos always load
+QTPLUGIN += qjpeg
 
 # Oracle OCI library
 win32 {
