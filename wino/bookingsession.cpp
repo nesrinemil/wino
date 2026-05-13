@@ -14,7 +14,7 @@
 #include <QApplication>
 
 BookingSession::BookingSession(QWidget *parent) :
-    QDialog(parent)
+    QWidget(parent)
 {
     // Connect to theme manager
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, &BookingSession::onThemeChanged);
@@ -31,9 +31,7 @@ void BookingSession::setupUI()
     ThemeManager* theme = ThemeManager::instance();
     bool isDark = theme->currentTheme() == ThemeManager::Dark;
     
-    setWindowTitle("Book a Session");
-    setModal(true);
-    setMinimumSize(1050, 850);
+    // embedded widget — no window title / modal needed
     
     // Main dialog widget
     this->setObjectName("BookingSessionDialog");
@@ -46,61 +44,6 @@ void BookingSession::setupUI()
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
-    
-    // Header
-    QWidget *headerWidget = new QWidget();
-    headerWidget->setStyleSheet(QString("QWidget { background-color: %1; }")
-        .arg(isDark ? "#0F172A" : "#111827"));
-    headerWidget->setFixedHeight(120);
-    
-    QHBoxLayout *headerLayout = new QHBoxLayout(headerWidget);
-    headerLayout->setContentsMargins(40, 20, 40, 20);
-    
-    QVBoxLayout *titleLayout = new QVBoxLayout();
-    QLabel *titleLabel = new QLabel("📅 Book a Session");
-    titleLabel->setStyleSheet(
-        "QLabel {"
-        "    font-size: 28px;"
-        "    font-weight: bold;"
-        "    color: #FFFFFF;"
-        "    padding: 5px 0;"
-        "}"
-    );
-    
-    QLabel *subtitleLabel = new QLabel("Schedule your driving lesson");
-    subtitleLabel->setStyleSheet(
-        "QLabel {"
-        "    color: #9CA3AF;"
-        "    font-size: 14px;"
-        "    line-height: 1.5;"
-        "    padding: 3px 0;"
-        "}"
-    );
-    
-    titleLayout->addWidget(titleLabel);
-    titleLayout->addWidget(subtitleLabel);
-    
-    QPushButton *closeBtn = new QPushButton("✕");
-    closeBtn->setStyleSheet(
-        "QPushButton {"
-        "    background-color: #374151;"
-        "    border: none;"
-        "    font-size: 20px;"
-        "    color: #9CA3AF;"
-        "    border-radius: 20px;"
-        "    line-height: 1.5;"
-        "}"
-        "QPushButton:hover { background-color: #FEE2E2; color: #DC2626; }"
-    );
-    closeBtn->setFixedSize(40, 40);
-    closeBtn->setCursor(Qt::PointingHandCursor);
-    connect(closeBtn, &QPushButton::clicked, this, &BookingSession::onCancel);
-    
-    headerLayout->addLayout(titleLayout);
-    headerLayout->addStretch();
-    headerLayout->addWidget(closeBtn);
-    
-    mainLayout->addWidget(headerWidget);
     
     // Scroll area
     QString scrollBg = theme->backgroundColor();
@@ -310,43 +253,26 @@ void BookingSession::setupUI()
         "}").arg(labelColor)
     );
     
-    QComboBox *timeCombo = new QComboBox();
+    // Hidden combo — only used as value store (onProceedToPayment reads from it)
+    QComboBox *timeCombo = new QComboBox(this);
     timeCombo->setObjectName("timeCombo");
-    timeCombo->setMinimumHeight(48);
-    // Reuse the generic comboStyle (we'll define it slightly earlier or just re-create it)
-    QString timeComboStyle = QString(
-        "QComboBox {"
-        "    padding: 12px 16px;"
-        "    border: 2px solid %1;"
-        "    border-radius: 10px;"
-        "    font-size: 14px;"
-        "    background-color: %2;"
-        "    color: %3;"
-        "    line-height: 1.5;"
-        "}"
-        "QComboBox:focus {"
-        "    border-color: #14B8A6;"
-        "    background-color: %4;"
-        "}"
-        "QComboBox::drop-down { border: none; padding-right: 12px; }"
-        "QComboBox QAbstractItemView {"
-        "    border: 1px solid %1;"
-        "    background-color: %4;"
-        "    color: %3;"
-        "    selection-background-color: %5;"
-        "    selection-color: %3;"
-        "    padding: 5px;"
-        "}"
-        "QComboBox:disabled {"
-        "    color: #DC2626;"
-        "    background-color: #FEE2E2;"
-        "    border-color: #FCA5A5;"
-        "}"
-    ).arg(inputBorder, inputBg, inputColor, inputFocusBg, isDark ? "#134E4A" : "#ECFDF5");
-    timeCombo->setStyleSheet(timeComboStyle);
-    
+    timeCombo->hide();
+
+    // Visual time-slot chips panel
+    QWidget *timeSlotsWidget = new QWidget();
+    timeSlotsWidget->setObjectName("timeSlotsWidget");
+    timeSlotsWidget->setMinimumHeight(48);
+    timeSlotsWidget->setStyleSheet("background:transparent;");
+    QHBoxLayout *slotsLayout = new QHBoxLayout(timeSlotsWidget);
+    slotsLayout->setContentsMargins(0, 4, 0, 4);
+    slotsLayout->setSpacing(10);
+    QLabel *initLbl = new QLabel(QString::fromUtf8("  \xe2\x8f\xb3  Loading slots\xe2\x80\xa6"));
+    initLbl->setStyleSheet(QString("color:%1;font-size:13px;background:transparent;").arg(isDark ? "#94A3B8" : "#6B7280"));
+    slotsLayout->addWidget(initLbl);
+    slotsLayout->addStretch();
+
     timeLayout->addWidget(timeLabel);
-    timeLayout->addWidget(timeCombo);
+    timeLayout->addWidget(timeSlotsWidget);
     
     dateTimeLayout->addLayout(dateLayout, 1);
     dateTimeLayout->addLayout(timeLayout, 1);
@@ -404,6 +330,7 @@ void BookingSession::setupUI()
         "}").arg(labelColor)
     );
     
+    // comboStyle — used by instructorCombo below
     QString comboStyle = QString(
         "QComboBox {"
         "    padding: 12px 16px;"
@@ -414,10 +341,7 @@ void BookingSession::setupUI()
         "    color: %3;"
         "    line-height: 1.5;"
         "}"
-        "QComboBox:focus {"
-        "    border-color: #14B8A6;"
-        "    background-color: %4;"
-        "}"
+        "QComboBox:focus { border-color: #14B8A6; background-color: %4; }"
         "QComboBox::drop-down { border: none; padding-right: 12px; }"
         "QComboBox QAbstractItemView {"
         "    border: 1px solid %1;"
@@ -427,20 +351,62 @@ void BookingSession::setupUI()
         "    selection-color: %3;"
         "    padding: 5px;"
         "}"
-        "QComboBox:disabled {"
-        "    color: #DC2626;"
-        "    background-color: #FEE2E2;"
-        "    border-color: #FCA5A5;"
-        "}"
+        "QComboBox:disabled { color: #6B7280; background-color: %2; border-color: %1; }"
     ).arg(inputBorder, inputBg, inputColor, inputFocusBg, isDark ? "#134E4A" : "#ECFDF5");
-    
-    QComboBox *durationCombo = new QComboBox();
+
+    // Hidden combo — keeps currentIndexChanged signal wiring intact
+    QComboBox *durationCombo = new QComboBox(this);
     durationCombo->setObjectName("durationCombo");
     durationCombo->addItems({"60 minutes", "90 minutes", "120 minutes"});
-    durationCombo->setMinimumHeight(48);
-    durationCombo->setStyleSheet(comboStyle);
+    durationCombo->hide();
+
+    // Duration chip buttons (60 / 90 / 120 min)
+    QWidget *durChipsWidget = new QWidget();
+    durChipsWidget->setMinimumHeight(48);
+    durChipsWidget->setStyleSheet("background:transparent;");
+    QHBoxLayout *durChipsLay = new QHBoxLayout(durChipsWidget);
+    durChipsLay->setContentsMargins(0, 4, 0, 4);
+    durChipsLay->setSpacing(10);
+
+    struct DurOpt { QString label; int idx; };
+    const QList<DurOpt> durOpts = {
+        { "60 min",  0 },
+        { "90 min",  1 },
+        { "120 min", 2 },
+    };
+
+    QString durChipSS = isDark
+        ? "QPushButton{background:#1E293B;color:#5EEAD4;"
+          "border:2px solid #14B8A6;border-radius:20px;"
+          "padding:7px 20px;font-size:14px;font-weight:600;}"
+          "QPushButton:checked{background:#14B8A6;color:white;}"
+          "QPushButton:hover:!checked{background:#0F3A36;}"
+        : "QPushButton{background:white;color:#14B8A6;"
+          "border:2px solid #14B8A6;border-radius:20px;"
+          "padding:7px 20px;font-size:14px;font-weight:600;}"
+          "QPushButton:checked{background:#14B8A6;color:white;}"
+          "QPushButton:hover:!checked{background:#E6FFFA;}";
+
+    for (const DurOpt &opt : durOpts) {
+        QPushButton *chip = new QPushButton(opt.label, durChipsWidget);
+        chip->setCheckable(true);
+        chip->setChecked(opt.idx == 0);   // 60 min selected by default
+        chip->setFixedHeight(40);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setStyleSheet(durChipSS);
+
+        int chipIdx = opt.idx;
+        connect(chip, &QPushButton::clicked, this, [chip, chipIdx, durChipsWidget, durationCombo]() {
+            for (QPushButton *btn : durChipsWidget->findChildren<QPushButton*>())
+                btn->setChecked(btn == chip);
+            durationCombo->setCurrentIndex(chipIdx);  // fires currentIndexChanged
+        });
+        durChipsLay->addWidget(chip);
+    }
+    durChipsLay->addStretch();
+
     durationLayout->addWidget(durationLabel);
-    durationLayout->addWidget(durationCombo);
+    durationLayout->addWidget(durChipsWidget);
     
     // Instructor
     QVBoxLayout *instructorLayout = new QVBoxLayout();
@@ -580,61 +546,36 @@ void BookingSession::setupUI()
     costLayout->addWidget(costValue);
     
     contentLayout->addWidget(costFrame);
-    contentLayout->addStretch();
-    
-    scrollArea->setWidget(contentWidget);
-    mainLayout->addWidget(scrollArea);
-    
-    // Footer avec actions
-    QWidget *footerWidget = new QWidget();
-    footerWidget->setStyleSheet(QString("QWidget { background-color: %1; border-top: 1px solid %2; }")
-        .arg(isDark ? "#0F172A" : "#111827", isDark ? "#334155" : "#374151"));
-    footerWidget->setFixedHeight(85);
-    
-    QHBoxLayout *buttonLayout = new QHBoxLayout(footerWidget);
-    buttonLayout->setContentsMargins(40, 18, 40, 18);
-    buttonLayout->setSpacing(15);
-    
-    QPushButton *cancelBtn = new QPushButton("Cancel");
-    cancelBtn->setStyleSheet(
-        "QPushButton {"
-        "    background-color: #374151;"
-        "    color: #D1D5DB;"
-        "    font-size: 15px;"
-        "    font-weight: bold;"
-        "    border: none;"
-        "    border-radius: 10px;"
-        "    padding: 16px 32px;"
-        "    line-height: 1.5;"
-        "}"
-        "QPushButton:hover { background-color: #4B5563; color: #FFFFFF; }"
-    );
-    cancelBtn->setCursor(Qt::PointingHandCursor);
-    connect(cancelBtn, &QPushButton::clicked, this, &BookingSession::onCancel);
-    
-    QPushButton *proceedBtn = new QPushButton("Confirm Booking →");
+
+    // ── Confirm Booking button (inside content, no separate footer bar) ────────
+    QPushButton *proceedBtn = new QPushButton(QString::fromUtf8("  \xe2\x9c\x94  Confirm Booking"));
+    proceedBtn->setFixedHeight(52);
+    proceedBtn->setCursor(Qt::PointingHandCursor);
     proceedBtn->setStyleSheet(
         "QPushButton {"
         "    background-color: #14B8A6;"
-        "    color: white;"
-        "    font-size: 15px;"
+        "    color: #ffffff;"
+        "    font-size: 16px;"
         "    font-weight: bold;"
         "    border: none;"
-        "    border-radius: 10px;"
-        "    padding: 16px 40px;"
-        "    line-height: 1.5;"
+        "    border-radius: 12px;"
+        "    padding: 0 40px;"
         "}"
-        "QPushButton:hover { background-color: #0F9D8E; }"
-        "QPushButton:pressed { background-color: #0D9488; }"
-    );
-    proceedBtn->setCursor(Qt::PointingHandCursor);
+        "QPushButton:hover { background-color: #0d9488; }"
+        "QPushButton:pressed { background-color: #0f766e; }");
     connect(proceedBtn, &QPushButton::clicked, this, &BookingSession::onProceedToPayment);
-    
-    buttonLayout->addWidget(cancelBtn);
-    buttonLayout->addStretch();
-    buttonLayout->addWidget(proceedBtn);
-    
-    mainLayout->addWidget(footerWidget);
+
+    // Right-align the button
+    QHBoxLayout *confirmRow = new QHBoxLayout();
+    confirmRow->setContentsMargins(0, 12, 0, 8);
+    confirmRow->addStretch();
+    confirmRow->addWidget(proceedBtn);
+    contentLayout->addLayout(confirmRow);
+
+    contentLayout->addStretch();
+
+    scrollArea->setWidget(contentWidget);
+    mainLayout->addWidget(scrollArea);
     
     // Connect signals to update availability
     connect(dateEdit, &QDateEdit::dateChanged, this, &BookingSession::updateAvailableTimes);
@@ -749,124 +690,151 @@ QWidget* BookingSession::createSessionTypeButton(const QString& type, const QStr
 
 void BookingSession::onCancel()
 {
-    this->reject();
+    emit backRequested();
 }
 
 void BookingSession::updateAvailableTimes()
 {
     QDateEdit* dateEdit = findChild<QDateEdit*>("dateEdit");
-    QComboBox* timeCombo = findChild<QComboBox*>("timeCombo");
     QComboBox* instructorCombo = findChild<QComboBox*>("instructorCombo");
-    QComboBox* durationCombo = findChild<QComboBox*>("durationCombo");
-    
-    if (!dateEdit || !timeCombo || !instructorCombo || !durationCombo) return;
-    
+    QComboBox* durationCombo  = findChild<QComboBox*>("durationCombo");
+    QComboBox* timeCombo      = findChild<QComboBox*>("timeCombo");
+    QWidget*   slotsWidget    = findChild<QWidget*>("timeSlotsWidget");
+
+    if (!dateEdit || !timeCombo || !instructorCombo || !durationCombo || !slotsWidget) return;
+
+    // ── Clear chips and hidden combo ────────────────────────────────────
     timeCombo->clear();
-    
-    QDate date = dateEdit->date();
-    
-    int studentId = qApp->property("currentUserId").toInt();
-    if (studentId == 0) return;
-    
+    QLayout *lay = slotsWidget->layout();
+    if (lay) {
+        while (lay->count()) {
+            QLayoutItem *item = lay->takeAt(0);
+            if (item->widget()) item->widget()->deleteLater();
+            delete item;
+        }
+    }
+
+    ThemeManager *tm = ThemeManager::instance();
+    bool isDark = tm->currentTheme() == ThemeManager::Dark;
+
+    // Helper: show a "no slots" label
+    auto showNoSlots = [&](const QString &msg = {}) {
+        QLabel *lbl = new QLabel(msg.isEmpty() ? "No slots available" : msg, slotsWidget);
+        lbl->setStyleSheet("color:#DC2626;font-size:13px;font-weight:600;"
+                           "padding:8px 0;background:transparent;");
+        qobject_cast<QHBoxLayout*>(lay)->addWidget(lbl);
+        qobject_cast<QHBoxLayout*>(lay)->addStretch();
+    };
+
+    QDate date     = dateEdit->date();
+    int studentId  = qApp->property("currentUserId").toInt();
+    if (studentId == 0) { showNoSlots(); return; }
+
     int currentStep = 1;
-    QSqlQuery qProg;
+    QSqlQuery qProg(QSqlDatabase::database());
     qProg.prepare("SELECT current_step FROM WINO_PROGRESS WHERE user_id = :uid");
     qProg.bindValue(":uid", studentId);
-    if(qProg.exec() && qProg.next()){
-        currentStep = qProg.value(0).toInt();
-    }
-    
-    // Fixed schedule for Code sessions (Monday-Saturday, 08:00 - 18:00)
+    if (qProg.exec() && qProg.next()) currentStep = qProg.value(0).toInt();
+
+    QVector<int> availHours;
+
     if (currentStep == 1) {
-        if (date.dayOfWeek() == 7) { // Sunday
-            timeCombo->addItem("Closed on Sunday");
-            timeCombo->setEnabled(false);
-        } else {
-            int durationMins = durationCombo->currentText().split(" ").first().toInt();
-            int blocksNeeded = (durationMins > 60) ? 2 : 1;
-            
-            for (int h = 8; h <= 17; h++) {
-                if (h + blocksNeeded <= 18) { // Local closes at 18:00
-                    timeCombo->addItem(QString("%1:00").arg(h, 2, 10, QChar('0')));
-                }
-            }
-            if (timeCombo->count() > 0) {
-                timeCombo->setEnabled(true);
-            } else {
-                timeCombo->addItem("No slots available");
-                timeCombo->setEnabled(false);
-            }
-        }
-        return;
-    }
-    
-    int instId = instructorCombo->currentData().toInt();
-    if (instId == 0) return;
-    
-    int durationMins = durationCombo->currentText().split(" ").first().toInt();
-    int blocksNeeded = (durationMins > 60) ? 2 : 1;
-    
-    int d = date.dayOfWeek();
-    QString dayStr;
-    switch(d) {
-        case 1: dayStr = "MONDAY"; break;
-        case 2: dayStr = "TUESDAY"; break;
-        case 3: dayStr = "WEDNESDAY"; break;
-        case 4: dayStr = "THURSDAY"; break;
-        case 5: dayStr = "FRIDAY"; break;
-        case 6: dayStr = "SATURDAY"; break;
-        case 7: dayStr = "SUNDAY"; break;
-    }
-    
-    QSet<int> allAvailableHours;
-    QSqlQuery q;
-    q.prepare("SELECT start_time FROM AVAILABILITY WHERE instructor_id = :id AND day_of_week = :d AND is_active = 1");
-    q.bindValue(":id", instId);
-    q.bindValue(":d", dayStr);
-    if (q.exec()) {
-        while (q.next()) {
-            int h = q.value(0).toString().left(2).toInt();
-            allAvailableHours.insert(h);
-        }
-    }
-    
-    QSet<int> bookedHours;
-    QSqlQuery qb;
-    qb.prepare("SELECT start_time, end_time FROM SESSION_BOOKING "
-               "WHERE instructor_id = :id AND TRUNC(session_date) = :sd AND status IN ('CONFIRMED', 'COMPLETED')");
-    qb.bindValue(":id", instId);
-    qb.bindValue(":sd", date);
-    if (qb.exec()) {
-        while (qb.next()) {
-            int startH = qb.value(0).toString().left(2).toInt();
-            int endH = qb.value(1).toString().left(2).toInt();
-            for (int i = startH; i < endH; i++) {
-                bookedHours.insert(i);
-            }
-            if (startH == endH) {
-                bookedHours.insert(startH);
-            }
-        }
-    }
-    
-    for (int h = 8; h <= 17; h++) {
-        bool canBook = true;
-        for (int i = 0; i < blocksNeeded; i++) {
-            if (!allAvailableHours.contains(h + i) || bookedHours.contains(h + i)) {
-                canBook = false; break;
-            }
-        }
-        if (canBook) {
-            timeCombo->addItem(QString("%1:00").arg(h, 2, 10, QChar('0')));
-        }
-    }
-    
-    if (timeCombo->count() == 0) {
-        timeCombo->addItem("No slots available");
-        timeCombo->setEnabled(false);
+        // Code stage: fixed Monday–Saturday 08–17
+        if (date.dayOfWeek() == 7) { showNoSlots("Closed on Sunday"); return; }
+        for (int h = 8; h <= 17; h++) availHours.append(h);
     } else {
-        timeCombo->setEnabled(true);
+        int instId = instructorCombo->currentData().toInt();
+        if (instId == 0) { showNoSlots(); return; }
+
+        static const char* dayNames[] =
+            {"", "MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"};
+        QString dayStr = dayNames[qBound(1, date.dayOfWeek(), 7)];
+
+        // Instructor's availability for this day
+        QSet<int> avail;
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare("SELECT start_time FROM AVAILABILITY "
+                  "WHERE instructor_id = :id AND day_of_week = :d AND is_active = 1");
+        q.bindValue(":id", instId);
+        q.bindValue(":d", dayStr);
+        if (q.exec()) {
+            while (q.next())
+                avail.insert(q.value(0).toString().left(2).toInt());
+        }
+
+        // Already-booked slots
+        QSet<int> booked;
+        QSqlQuery qb(QSqlDatabase::database());
+        qb.prepare("SELECT start_time, end_time FROM SESSION_BOOKING "
+                   "WHERE instructor_id = :id AND TRUNC(session_date) = :sd "
+                   "AND status IN ('CONFIRMED','COMPLETED')");
+        qb.bindValue(":id", instId);
+        qb.bindValue(":sd", date);
+        if (qb.exec()) {
+            while (qb.next()) {
+                int sh = qb.value(0).toString().left(2).toInt();
+                int eh = qb.value(1).toString().left(2).toInt();
+                for (int i = sh; i < eh; i++) booked.insert(i);
+                if (sh == eh) booked.insert(sh);
+            }
+        }
+
+        // A slot is available if the instructor marked that start hour
+        // (no consecutive-block check — session duration is handled by end_time in DB)
+        for (int h = 8; h <= 17; h++) {
+            if (avail.contains(h) && !booked.contains(h))
+                availHours.append(h);
+        }
     }
+
+    if (availHours.isEmpty()) { showNoSlots(); return; }
+
+    // ── Build chip buttons ───────────────────────────────────────────────
+    QString chipSS = isDark
+        ? "QPushButton{"
+          "background:#134E4A;color:#5EEAD4;"
+          "border:2px solid #14B8A6;border-radius:20px;"
+          "padding:7px 22px;font-size:14px;font-weight:600;}"
+          "QPushButton:checked{"
+          "background:#14B8A6;color:white;border-color:#14B8A6;}"
+          "QPushButton:hover:!checked{background:#0F3A36;}"
+        : "QPushButton{"
+          "background:white;color:#14B8A6;"
+          "border:2px solid #14B8A6;border-radius:20px;"
+          "padding:7px 22px;font-size:14px;font-weight:600;}"
+          "QPushButton:checked{"
+          "background:#14B8A6;color:white;border-color:#14B8A6;}"
+          "QPushButton:hover:!checked{background:#E6FFFA;}";
+
+    QHBoxLayout *slotsLay = qobject_cast<QHBoxLayout*>(lay);
+    bool firstChip = true;
+    for (int h : availHours) {
+        QString label = QString("%1:00").arg(h, 2, 10, QChar('0'));
+        timeCombo->addItem(label);
+
+        QPushButton *chip = new QPushButton(label, slotsWidget);
+        chip->setCheckable(true);
+        chip->setChecked(firstChip);
+        chip->setFixedHeight(40);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setStyleSheet(chipSS);
+
+        connect(chip, &QPushButton::clicked, this, [this, chip, label, slotsWidget]() {
+            // mutual exclusion
+            for (QPushButton *btn : slotsWidget->findChildren<QPushButton*>())
+                btn->setChecked(btn == chip);
+            // sync hidden combo
+            if (QComboBox *tc = findChild<QComboBox*>("timeCombo"))
+                tc->setCurrentText(label);
+        });
+
+        slotsLay->addWidget(chip);
+        firstChip = false;
+    }
+    slotsLay->addStretch();
+
+    // Pre-select first slot in hidden combo
+    if (timeCombo->count() > 0) timeCombo->setCurrentIndex(0);
 }
 
 void BookingSession::onProceedToPayment()
@@ -884,9 +852,9 @@ void BookingSession::onProceedToPayment()
     
     QDate date = dateEdit->date();
     QString timeStr = timeCombo->currentText();
-    if (timeStr == "No slots available" || timeCombo->count() == 0) {
-         QMessageBox::warning(this, "Unavailable", "Please select a valid time slot.");
-         return;
+    if (timeStr.isEmpty() || timeCombo->count() == 0) {
+        QMessageBox::warning(this, "Unavailable", "Please select a valid time slot.");
+        return;
     }
     QTime startTime = QTime::fromString(timeStr, "HH:mm");
     int minSelected = durationCombo->currentText().split(" ").first().toInt();
@@ -944,9 +912,9 @@ void BookingSession::onProceedToPayment()
     double currentDebt = totalDue - totalPaid;
     if (currentDebt > 200) {
         QMessageBox msgBox(this);
-        msgBox.setWindowTitle("Accès Refusé");
-        msgBox.setText("⚠️ Plafond de crédit atteint");
-        msgBox.setInformativeText(QString("Désolé, vous ne pouvez pas réserver de nouvelle séance. Votre solde débiteur actuel est de <b>%1 TND</b>, ce qui dépasse la limite autorisée de 200 TND.<br><br>Veuillez régulariser votre situation en effectuant un paiement depuis votre tableau de bord afin de pouvoir effectuer de nouvelles réservations.").arg(currentDebt, 0, 'f', 0));
+        msgBox.setWindowTitle("Access Denied");
+        msgBox.setText("⚠️ Credit limit reached");
+        msgBox.setInformativeText(QString("Sorry, you cannot book a new session. Your current outstanding balance is <b>%1 TND</b>, which exceeds the allowed limit of 200 TND.<br><br>Please settle your balance by making a payment from your dashboard in order to make new bookings.").arg(currentDebt, 0, 'f', 0));
         msgBox.setIcon(QMessageBox::Warning);
         ThemeManager* theme = ThemeManager::instance();
         msgBox.setStyleSheet(
@@ -1016,7 +984,7 @@ void BookingSession::onProceedToPayment()
     msgBox.exec();
     
     emit sessionBooked(); // notify dashboard to refresh calendar
-    this->accept();
+    emit backRequested(); // return to dashboard after booking
 }
 
 void BookingSession::updateColors()

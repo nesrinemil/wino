@@ -4,6 +4,7 @@
 #include "database.h"
 #include "emailservice.h"
 #include <QSqlQuery>
+#include <QSqlError>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,6 +20,13 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QVector>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QPixmap>
+#include <QPainter>
+#include <QPainterPath>
+#include <QFile>
+#include <memory>
 
 AdminDashboard::AdminDashboard(QWidget *parent) :
     QMainWindow(parent),
@@ -34,12 +42,71 @@ AdminDashboard::AdminDashboard(QWidget *parent) :
     connect(ui->approvedFilterButton, &QPushButton::clicked, [this]() { filterSchools("active"); });
     connect(ui->deactivatedFilterButton, &QPushButton::clicked, [this]() { filterSchools("suspended"); });
     
+    ensureLogoColumn();
+    ensureInstrPhotoColumn();
     loadSchools();
 }
 
 AdminDashboard::~AdminDashboard()
 {
     delete ui;
+}
+
+// ── Ensure logo_path column exists (safe: ORA-01430 = already exists) ────────
+void AdminDashboard::ensureLogoColumn()
+{
+    QSqlQuery q(QSqlDatabase::database());
+    q.exec("ALTER TABLE driving_schools ADD (logo_path VARCHAR2(500))");
+    // ORA-01430 (column already exists) is intentionally ignored
+}
+
+// ── Ensure photo_path column exists in INSTRUCTORS table ─────────────────────
+void AdminDashboard::ensureInstrPhotoColumn()
+{
+    QSqlQuery q(QSqlDatabase::database());
+    q.exec("ALTER TABLE instructors ADD (photo_path VARCHAR2(500))");
+    // ORA-01430 (column already exists) is intentionally ignored
+}
+
+// ── Crop a pixmap into a circle of the given size ────────────────────────────
+QPixmap AdminDashboard::makeCircularPixmap(const QPixmap &src, int size)
+{
+    QPixmap scaled = src.scaled(size, size, Qt::KeepAspectRatioByExpanding,
+                                Qt::SmoothTransformation);
+    QPixmap result(size, size);
+    result.fill(Qt::transparent);
+    QPainter p(&result);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path;
+    path.addEllipse(0, 0, size, size);
+    p.setClipPath(path);
+    int xOff = (scaled.width()  - size) / 2;
+    int yOff = (scaled.height() - size) / 2;
+    p.drawPixmap(-xOff, -yOff, scaled);
+    return result;
+}
+
+// ── Upload logo for a school — file dialog → copy → save path to Oracle ──────
+void AdminDashboard::uploadLogo(int schoolId)
+{
+    QString path = QFileDialog::getOpenFileName(
+        this,
+        QString::fromUtf8("Choose school logo"),
+        QString(),
+        "Images (*.png *.jpg *.jpeg *.bmp *.webp)");
+    if (path.isEmpty()) return;
+
+    // Store the path directly in the database
+    QSqlQuery q(QSqlDatabase::database());
+    q.prepare("UPDATE driving_schools SET logo_path = :p WHERE id = :id");
+    q.bindValue(":p",  path);
+    q.bindValue(":id", schoolId);
+    if (!q.exec()) {
+        QMessageBox::warning(this, "Error",
+            "Could not save logo path:\n" + q.lastError().text());
+        return;
+    }
+    loadSchools();   // refresh the list
 }
 
 void AdminDashboard::loadSchools()
@@ -58,15 +125,15 @@ void AdminDashboard::loadSchools()
     mainLayout->setSpacing(15);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     
-    QSqlQuery countQuery;
+    QSqlQuery countQuery(QSqlDatabase::database());
     int pendingCount = 0, approvedCount = 0, totalCount = 0;
-    
+
     countQuery.exec("SELECT COUNT(*) FROM driving_schools WHERE status = 'pending'");
     if (countQuery.next()) pendingCount = countQuery.value(0).toInt();
-    
+
     countQuery.exec("SELECT COUNT(*) FROM driving_schools WHERE status = 'active'");
     if (countQuery.next()) approvedCount = countQuery.value(0).toInt();
-    
+
     countQuery.exec("SELECT COUNT(*) FROM driving_schools");
     if (countQuery.next()) totalCount = countQuery.value(0).toInt();
     
@@ -74,25 +141,27 @@ void AdminDashboard::loadSchools()
     ui->approvedCountLabel->setText(QString::number(approvedCount));
     ui->totalCountLabel->setText(QString::number(totalCount));
     
-    QSqlQuery query("SELECT ds.id, ds.name, "
-                    "(SELECT COUNT(*) FROM students s WHERE s.driving_school_id = ds.id) AS students_count, "
-                    "(SELECT COUNT(*) FROM cars c WHERE c.driving_school_id = ds.id) AS vehicles_count, "
-                    "ds.status FROM driving_schools ds ORDER BY ds.id DESC");
-    
+    QSqlQuery query(QSqlDatabase::database());
+    query.exec("SELECT ds.id, ds.name, "
+               "(SELECT COUNT(*) FROM students s WHERE s.driving_school_id = ds.id) AS students_count, "
+               "(SELECT COUNT(*) FROM cars c WHERE c.driving_school_id = ds.id) AS vehicles_count, "
+               "ds.status, ds.logo_path FROM driving_schools ds ORDER BY ds.id DESC");
+
     while (query.next()) {
         int id = query.value(0).toInt();
-        QString name = query.value(1).toString();
-        int students = query.value(2).toInt();
-        int vehicles = query.value(3).toInt();
-        QString status = query.value(4).toString();
-        
+        QString name     = query.value(1).toString();
+        int students     = query.value(2).toInt();
+        int vehicles     = query.value(3).toInt();
+        QString status   = query.value(4).toString();
+        QString logoPath = query.value(5).toString();
+
         QWidget *card = new QWidget();
         card->setObjectName(QString("schoolCard_%1").arg(id));
         card->setProperty("status", status);
         card->setProperty("schoolId", id);
         card->setProperty("schoolName", name);
-        setupSchoolCard(card, id, name, students, vehicles, status);
-        
+        setupSchoolCard(card, id, name, students, vehicles, status, logoPath);
+
         mainLayout->addWidget(card);
     }
     
@@ -100,7 +169,8 @@ void AdminDashboard::loadSchools()
 }
 
 void AdminDashboard::setupSchoolCard(QWidget *card, int schoolId, const QString &name,
-                                      int students, int vehicles, const QString &status)
+                                      int students, int vehicles, const QString &status,
+                                      const QString &logoPath)
 {
     QString cName = card->objectName();
     card->setStyleSheet(
@@ -110,20 +180,57 @@ void AdminDashboard::setupSchoolCard(QWidget *card, int schoolId, const QString 
     card->setMinimumHeight(80);
 
     QHBoxLayout *cardLayout = new QHBoxLayout(card);
-    cardLayout->setContentsMargins(20, 14, 20, 14);
-    cardLayout->setSpacing(16);
-    
+    cardLayout->setContentsMargins(16, 12, 20, 12);
+    cardLayout->setSpacing(14);
+
+    // ── Logo circle — single QPushButton with icon (click to upload) ─────────
+    const int LOGO_SIZE = 54;
+    auto makeLogoPixmap = [=](const QString &path) -> QPixmap {
+        QPixmap pix;
+        if (!path.isEmpty() && QFile::exists(path) && pix.load(path))
+            return makeCircularPixmap(pix, LOGO_SIZE);
+        // Initials placeholder
+        QPixmap ph(LOGO_SIZE, LOGO_SIZE);
+        ph.fill(Qt::transparent);
+        QPainter pp(&ph);
+        pp.setRenderHint(QPainter::Antialiasing);
+        pp.setBrush(QColor("#e0f2f1"));
+        pp.setPen(QPen(QColor("#14B8A6"), 2));
+        pp.drawEllipse(1, 1, LOGO_SIZE-2, LOGO_SIZE-2);
+        pp.setPen(QColor("#0d9488"));
+        QFont f = pp.font(); f.setPointSize(16); f.setBold(true); pp.setFont(f);
+        pp.drawText(QRect(0, 0, LOGO_SIZE, LOGO_SIZE), Qt::AlignCenter,
+                    name.isEmpty() ? QString("?") : QString(name[0]).toUpper());
+        return ph;
+    };
+
+    QPushButton *logoBtn = new QPushButton(card);
+    logoBtn->setFixedSize(LOGO_SIZE, LOGO_SIZE);
+    logoBtn->setCursor(Qt::PointingHandCursor);
+    logoBtn->setToolTip(QString::fromUtf8("Click to change logo"));
+    logoBtn->setIcon(QIcon(makeLogoPixmap(logoPath)));
+    logoBtn->setIconSize(QSize(LOGO_SIZE, LOGO_SIZE));
+    logoBtn->setStyleSheet(
+        "QPushButton { border-radius: 27px; border: 2px solid #14B8A6;"
+        "              background: transparent; padding: 0px; }"
+        "QPushButton:hover { background: rgba(20,184,166,0.15); }");
+    QObject::connect(logoBtn, &QPushButton::clicked, this, [this, schoolId]() {
+        uploadLogo(schoolId);
+    });
+    cardLayout->addWidget(logoBtn);
+
+    // ── School info ───────────────────────────────────────────────────────────
     QVBoxLayout *infoLayout = new QVBoxLayout();
-    
+
     QLabel *nameLabel = new QLabel(name);
     nameLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #1F1827; background: transparent;");
 
-    QLabel *locationLabel = new QLabel("📍 Monastir, Monastir");
+    QLabel *locationLabel = new QLabel(QString::fromUtf8("📍 Monastir, Monastir"));
     locationLabel->setStyleSheet("font-size: 13px; color: #6B7280; background: transparent;");
-    
+
     infoLayout->addWidget(nameLabel);
     infoLayout->addWidget(locationLabel);
-    
+
     cardLayout->addLayout(infoLayout, 3);
     
     QLabel *studentsLabel = new QLabel(QString("👥 %1 students").arg(students));
@@ -331,36 +438,54 @@ void AdminDashboard::onViewClicked(int schoolId)
     vLayout->setSpacing(8);
     vLayout->setContentsMargins(0, 0, 4, 0);
 
-    QSqlQuery vq;
-    vq.prepare("SELECT brand, model, year, plate_number, transmission, status FROM vehicles WHERE school_id = ? ORDER BY id");
+    // Use CARS table (Oracle) — same table as InstructorDashboard, includes image_path
+    QSqlQuery vq(QSqlDatabase::database());
+    vq.prepare("SELECT brand, model, year, plate_number, transmission, "
+               "CASE WHEN is_active=1 THEN 'active' ELSE 'inactive' END, image_path "
+               "FROM cars WHERE driving_school_id = ? ORDER BY id");
     vq.addBindValue(schoolId);
     vq.exec();
 
     bool hasVehicles = false;
     while (vq.next()) {
         hasVehicles = true;
-        QString brand    = vq.value(0).toString();
-        QString model    = vq.value(1).toString();
-        int     year     = vq.value(2).toInt();
-        QString plate    = vq.value(3).toString();
-        QString trans    = vq.value(4).toString();
-        QString vstatus  = vq.value(5).toString();
+        QString brand     = vq.value(0).toString();
+        QString model     = vq.value(1).toString();
+        int     year      = vq.value(2).toInt();
+        QString plate     = vq.value(3).toString();
+        QString trans     = vq.value(4).toString();
+        QString vstatus   = vq.value(5).toString();
+        QString imagePath = vq.value(6).toString();
 
         static int vCardCounter = 0;
         QWidget *vCard = new QWidget();
         vCard->setObjectName(QString("vCard%1").arg(vCardCounter++));
         vCard->setStyleSheet(
-            "QWidget#" + vCard->objectName() + " { background:#F9FAFB; border:1px solid #E5E7EB; border-radius:8px; }");
+            "QWidget#" + vCard->objectName() +
+            " { background:#F9FAFB; border:1px solid #E5E7EB; border-radius:10px; }");
         QHBoxLayout *vRow = new QHBoxLayout(vCard);
-        vRow->setContentsMargins(12, 8, 12, 8);
+        vRow->setContentsMargins(12, 10, 12, 10);
         vRow->setSpacing(12);
 
-        // Car icon placeholder (grey box, simulates photo)
-        QLabel *carIcon = new QLabel("🚗");
-        carIcon->setFixedSize(48, 48);
+        // Car photo (real image or emoji fallback)
+        QLabel *carIcon = new QLabel();
+        carIcon->setFixedSize(56, 56);
         carIcon->setAlignment(Qt::AlignCenter);
-        carIcon->setStyleSheet(
-            "background:#E5E7EB; border-radius:6px; font-size:26px;");
+        carIcon->setStyleSheet("border-radius:8px; background:#E5E7EB;");
+        bool photoLoaded = false;
+        if (!imagePath.isEmpty()) {
+            QPixmap px(imagePath);
+            if (!px.isNull()) {
+                carIcon->setPixmap(px.scaled(56, 56, Qt::KeepAspectRatioByExpanding,
+                                             Qt::SmoothTransformation));
+                carIcon->setStyleSheet("border-radius:8px; background:#E5E7EB;");
+                photoLoaded = true;
+            }
+        }
+        if (!photoLoaded) {
+            carIcon->setText(QString::fromUtf8("\xf0\x9f\x9a\x97")); // 🚗
+            carIcon->setStyleSheet("border-radius:8px; background:#14B8A6; font-size:24px;");
+        }
         vRow->addWidget(carIcon);
 
         QVBoxLayout *vInfo = new QVBoxLayout();
@@ -423,18 +548,19 @@ void AdminDashboard::onViewClicked(int schoolId)
     iLayout->setSpacing(8);
     iLayout->setContentsMargins(0, 0, 4, 0);
 
-    iq.prepare("SELECT full_name, email, phone, role, available FROM instructors WHERE school_id = ? ORDER BY role DESC, full_name");
+    iq.prepare("SELECT full_name, email, phone, role, available, photo_path FROM instructors WHERE school_id = ? ORDER BY role DESC, full_name");
     iq.addBindValue(schoolId);
     iq.exec();
 
     bool hasInstr = false;
     while (iq.next()) {
         hasInstr = true;
-        QString iname  = iq.value(0).toString();
-        QString email  = iq.value(1).toString();
-        QString phone  = iq.value(2).toString();
-        QString role   = iq.value(3).toString();
-        bool    avail  = iq.value(4).toBool();
+        QString iname     = iq.value(0).toString();
+        QString email     = iq.value(1).toString();
+        QString phone     = iq.value(2).toString();
+        QString role      = iq.value(3).toString();
+        bool    avail     = iq.value(4).toBool();
+        QString photoPath = iq.value(5).toString();
 
         static int iCardCounter = 0;
         QWidget *iCard = new QWidget();
@@ -445,12 +571,21 @@ void AdminDashboard::onViewClicked(int schoolId)
         iRow->setContentsMargins(12, 8, 12, 8);
         iRow->setSpacing(12);
 
-        // Avatar circle with initials
-        QLabel *avatar = new QLabel(iname.isEmpty() ? "?" : QString(iname[0].toUpper()));
-        avatar->setFixedSize(42, 42);
+        // Avatar: show photo if available, else teal initial
+        QLabel *avatar = new QLabel();
+        avatar->setFixedSize(46, 46);
         avatar->setAlignment(Qt::AlignCenter);
-        avatar->setStyleSheet(
-            "background:#14B8A6;color:white;border-radius:21px;font-size:18px;font-weight:bold;");
+        {
+            QPixmap src;
+            if (!photoPath.isEmpty() && QFile::exists(photoPath) && src.load(photoPath)) {
+                avatar->setPixmap(makeCircularPixmap(src, 46));
+                avatar->setStyleSheet("border-radius:23px; border:2px solid #14B8A6;");
+            } else {
+                avatar->setText(iname.isEmpty() ? "?" : QString(iname[0].toUpper()));
+                avatar->setStyleSheet(
+                    "background:#14B8A6;color:white;border-radius:23px;font-size:18px;font-weight:bold;");
+            }
+        }
         iRow->addWidget(avatar);
 
         QVBoxLayout *iInfo = new QVBoxLayout();
@@ -501,6 +636,9 @@ void AdminDashboard::onViewClicked(int schoolId)
 
 void AdminDashboard::onAddSchoolClicked()
 {
+    // Shared logo path (shared_ptr so both the upload button and doSubmit see the same value)
+    auto logoPathPtr = std::make_shared<QString>();
+
     // ═══════════════════════════════════════════════════════════════════════
     //  SHARED HELPERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -619,6 +757,67 @@ void AdminDashboard::onAddSchoolClicked()
     r1->addWidget(phoneEdit); r1->addWidget(emailEdit);
     p1->addLayout(r1);
 
+    // ── Logo upload ──────────────────────────────────────────────────────
+    p1->addSpacing(8);
+    p1->addWidget(sectionLabel("Logo (optional)"));
+
+    QHBoxLayout *logoRow = new QHBoxLayout();
+    logoRow->setSpacing(16);
+
+    // Circular preview
+    const int PREV = 64;
+    QLabel *logoPreview = new QLabel();
+    logoPreview->setFixedSize(PREV, PREV);
+    auto drawPlaceholder = [=]() {
+        QPixmap pm(PREV, PREV); pm.fill(Qt::transparent);
+        QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
+        pp.setBrush(QColor("#e0f2f1")); pp.setPen(QPen(QColor("#14B8A6"), 2));
+        pp.drawEllipse(1, 1, PREV-2, PREV-2);
+        pp.setPen(QColor("#9ca3af")); pp.setFont(QFont("Segoe UI", 22));
+        pp.drawText(QRect(0,0,PREV,PREV), Qt::AlignCenter, "🖼");
+        logoPreview->setPixmap(pm);
+        logoPreview->setStyleSheet("border-radius:32px; border:2px dashed #14B8A6;");
+    };
+    drawPlaceholder();
+
+    QVBoxLayout *logoBtnCol = new QVBoxLayout();
+    logoBtnCol->setSpacing(6);
+
+    QPushButton *uploadLogoBtn = new QPushButton(QString::fromUtf8("📁  Choose a logo"));
+    uploadLogoBtn->setStyleSheet(
+        "QPushButton { background:#f0fdfa; border:1.5px solid #14B8A6; color:#0d9488;"
+        " border-radius:7px; padding:7px 18px; font-size:13px; font-weight:600; }"
+        "QPushButton:hover { background:#ccfbf1; }");
+
+    QLabel *logoNameLbl = new QLabel(QString::fromUtf8("No file selected"));
+    logoNameLbl->setStyleSheet("color:#9ca3af; font-size:11px;");
+    logoNameLbl->setWordWrap(true);
+
+    connect(uploadLogoBtn, &QPushButton::clicked, dialog, [=]() mutable {
+        QString path = QFileDialog::getOpenFileName(
+            dialog,
+            QString::fromUtf8("Choose logo"),
+            QString(),
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp)");
+        if (path.isEmpty()) return;
+        *logoPathPtr = path;
+        // Show preview
+        QPixmap src(path);
+        if (!src.isNull())
+            logoPreview->setPixmap(makeCircularPixmap(src, PREV));
+        logoPreview->setStyleSheet("border-radius:32px; border:2px solid #14B8A6;");
+        logoNameLbl->setText(QFileInfo(path).fileName());
+        logoNameLbl->setStyleSheet("color:#0d9488; font-size:11px;");
+    });
+
+    logoBtnCol->addWidget(uploadLogoBtn);
+    logoBtnCol->addWidget(logoNameLbl);
+    logoBtnCol->addStretch();
+
+    logoRow->addWidget(logoPreview);
+    logoRow->addLayout(logoBtnCol, 1);
+    p1->addLayout(logoRow);
+
     // Address is always Monastir, Monastir
 
     // ── Instructor count picker ──────────────────────────────────────────
@@ -660,6 +859,7 @@ void AdminDashboard::onAddSchoolClicked()
         QLabel    *stepLbl;
         QPushButton *backBtn;
         QPushButton *nextBtn;  // nullptr on last page (replaced by submitBtn)
+        QString   *photoPath;  // instructor photo file path
     };
 
     const int MAX_INSTR = 20;
@@ -714,6 +914,63 @@ void AdminDashboard::onAddSchoolClicked()
         lay->addWidget(cm);
         lay->addWidget(noteLabel("Password must be at least 6 characters."));
 
+        // ── Photo upload ──────────────────────────────────────────────────────
+        lay->addSpacing(6);
+        lay->addWidget(sectionLabel("Photo (optional)"));
+
+        QString *photoPtr = new QString();   // heap-allocated, lives with the dialog
+
+        const int IPRV = 56;
+        QLabel *photoPreview = new QLabel();
+        photoPreview->setFixedSize(IPRV, IPRV);
+        {
+            QPixmap pm(IPRV, IPRV); pm.fill(Qt::transparent);
+            QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
+            pp.setBrush(QColor("#e0f2f1")); pp.setPen(QPen(QColor("#14B8A6"), 2));
+            pp.drawEllipse(1, 1, IPRV-2, IPRV-2);
+            pp.setPen(QColor("#9ca3af")); pp.setFont(QFont("Segoe UI", 18));
+            pp.drawText(QRect(0,0,IPRV,IPRV), Qt::AlignCenter, "👤");
+            photoPreview->setPixmap(pm);
+        }
+        photoPreview->setStyleSheet("border-radius:28px; border:2px dashed #14B8A6;");
+
+        QLabel *photoNameLbl = new QLabel(QString::fromUtf8("No photo selected"));
+        photoNameLbl->setStyleSheet("color:#9ca3af; font-size:11px;");
+        photoNameLbl->setWordWrap(true);
+
+        QPushButton *uploadPhotoBtn = new QPushButton(QString::fromUtf8("📷  Upload Photo"));
+        uploadPhotoBtn->setStyleSheet(
+            "QPushButton { background:#f0fdfa; border:1.5px solid #14B8A6; color:#0d9488;"
+            " border-radius:7px; padding:6px 16px; font-size:13px; font-weight:600; }"
+            "QPushButton:hover { background:#ccfbf1; }");
+
+        QHBoxLayout *photoRow = new QHBoxLayout();
+        photoRow->setSpacing(14);
+        QVBoxLayout *photoBtnCol = new QVBoxLayout();
+        photoBtnCol->setSpacing(5);
+        photoBtnCol->addWidget(uploadPhotoBtn);
+        photoBtnCol->addWidget(photoNameLbl);
+        photoBtnCol->addStretch();
+        photoRow->addWidget(photoPreview);
+        photoRow->addLayout(photoBtnCol, 1);
+        lay->addLayout(photoRow);
+
+        connect(uploadPhotoBtn, &QPushButton::clicked, dialog, [=]() mutable {
+            QString path = QFileDialog::getOpenFileName(
+                dialog,
+                QString::fromUtf8("Choose instructor photo"),
+                QString(),
+                "Images (*.png *.jpg *.jpeg *.bmp *.webp)");
+            if (path.isEmpty()) return;
+            *photoPtr = path;
+            QPixmap src(path);
+            if (!src.isNull())
+                photoPreview->setPixmap(makeCircularPixmap(src, IPRV));
+            photoPreview->setStyleSheet("border-radius:28px; border:2px solid #14B8A6;");
+            photoNameLbl->setText(QFileInfo(path).fileName());
+            photoNameLbl->setStyleSheet("color:#0d9488; font-size:11px;");
+        });
+
         QHBoxLayout *btns = new QHBoxLayout(); btns->setSpacing(10);
         QPushButton *bk = btnSecondary("← Back");
         QPushButton *nx = btnPrimary("Next  →");  // overridden to Submit on last page
@@ -721,7 +978,7 @@ void AdminDashboard::onAddSchoolClicked()
         btns->addWidget(nx);
         lay->addLayout(btns);
 
-        instrPages[i] = { ne, ee, pe, d17, pw, cm, sLbl, bk, nx };
+        instrPages[i] = { ne, ee, pe, d17, pw, cm, sLbl, bk, nx, photoPtr };
         stack->addWidget(pg);   // stack index = 1 + i
     }
 
@@ -818,6 +1075,15 @@ void AdminDashboard::onAddSchoolClicked()
             return;
         }
 
+        // Save logo path if one was selected
+        if (!logoPathPtr->isEmpty()) {
+            QSqlQuery lq(QSqlDatabase::database());
+            lq.prepare("UPDATE driving_schools SET logo_path = :p WHERE id = :id");
+            lq.bindValue(":p",  *logoPathPtr);
+            lq.bindValue(":id", newSchoolId);
+            lq.exec();
+        }
+
         QString schoolName = nameEdit->text().trimmed();
 
         // ── Insert instructors into INSTRUCTORS ────────────────────────
@@ -826,14 +1092,16 @@ void AdminDashboard::onAddSchoolClicked()
         for (int i = 0; i < n; ++i) {
             QSqlQuery nq;
             nq.prepare(
-                "INSERT INTO instructors (school_id, full_name, email, phone, password_hash, d17_id, role) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'instructor')");
+                "INSERT INTO instructors (school_id, full_name, email, phone, password_hash, d17_id, role, photo_path) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'instructor', ?)");
             nq.addBindValue(newSchoolId);
             nq.addBindValue(instrPages[i].nameEdit->text().trimmed());
             nq.addBindValue(instrPages[i].emailEdit->text().trimmed());
             nq.addBindValue(instrPages[i].phoneEdit->text().trimmed());
             nq.addBindValue(hashPwd(instrPages[i].pwdEdit->text()));
             nq.addBindValue(instrPages[i].d17Edit->text().trimmed());
+            nq.addBindValue(instrPages[i].photoPath && !instrPages[i].photoPath->isEmpty()
+                            ? *instrPages[i].photoPath : QVariant(QMetaType(QMetaType::QString)));
             if (nq.exec()) {
                 ++insertedNormal;
             }

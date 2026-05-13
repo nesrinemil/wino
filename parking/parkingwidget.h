@@ -340,9 +340,9 @@ private:
     QLabel *m_selectedCarLabel;
 
     // ── Home page widgets ──
-    QLabel *m_dashLevel;
-    QProgressBar *m_dashXPBar;
-    QLabel *m_dashXPLabel;
+    QLabel        *m_dashLevel   = nullptr;
+    QProgressBar  *m_dashXPBar   = nullptr;
+    QLabel        *m_dashXPLabel = nullptr;
     QLabel *m_statSessions, *m_statSuccess, *m_statBest, *m_statStreak;
     QList<QProgressBar*> m_masteryBars;
     QList<QLabel*> m_masteryPcts;
@@ -471,6 +471,18 @@ private:
     void initVideoTutorials();
     int computeRecommendedManeuver();
     double computeExamPassProbability();
+
+    // ── Sidebar sub-navigation pages ──
+    QWidget* createVideosPage();
+    QWidget* createHistoriquePage();
+    QWidget* createBadgesPage();
+    void     refreshBadges();             // re-checks DB and updates badge visuals
+    QList<QWidget*> m_badgeCards;         // pointers for refreshBadges()
+
+public:
+    // Called by StudentLearningHub sidebar sub-nav
+    // 0=Dashboard(training) 1=Videos 2=Historique 3=Badges
+    void navigateParkingSection(int section);
 };
 
 #endif

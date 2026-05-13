@@ -22,6 +22,7 @@
 #include <QList>
 #include "weatherservice.h"
 #include "airecommendations.h"
+#include "bookingsession.h"
 #include <QPrinter>
 #include <QPainter>
 #include <QFileDialog>
@@ -44,6 +45,7 @@ class WinoStudentDashboard : public QWidget
 public:
     explicit WinoStudentDashboard(QWidget *parent = nullptr);
     ~WinoStudentDashboard();
+    void navigateToSection(int section);  // 0=Dashboard 1=Book 2=AI 3=Calendar
 
 private slots:
     void onBackClicked();
@@ -78,20 +80,23 @@ private:
     void refreshExamPage();
 
     // Membres
-    QCalendarWidget *calendarWidget;
+    QCalendarWidget *calendarWidget = nullptr;  // only set in createCalendarSection() (lazy)
     QList<Session> sessions;
-    QPushButton* themeToggleBtn;
-    QPushButton* examBtn;
-    QWidget* centralWidget;           // the dashboard page (stack index 0)
+    QPushButton* themeToggleBtn = nullptr;
+    QPushButton* examBtn        = nullptr;
+    QWidget* centralWidget      = nullptr;      // the dashboard page (stack index 0)
 
     // ── Embedded page navigation ─────────────────────────────────────────────
     QStackedWidget    *m_mainStack  = nullptr;  // 0=dashboard, 1=AI, 2=Exam
+    QScrollArea       *m_dashScroll = nullptr;  // main dashboard scroll area
+    QWidget           *m_calSection = nullptr;  // calendar section widget (for scroll-to)
     AIRecommendations *m_aiPage     = nullptr;
     QWidget           *m_examPage       = nullptr;
     QVBoxLayout       *m_examBodyLayout = nullptr; // refreshable inner layout
     QWidget           *m_examTopBar     = nullptr; // for theme updates
     QScrollArea       *m_examScroll     = nullptr; // for theme updates
     QWidget           *m_examBodyWidget = nullptr; // for theme updates
+    BookingSession    *m_bookingPage    = nullptr; // embedded booking (stack index 4)
 };
 
 #endif // WINO_STUDENTDASHBOARD_H

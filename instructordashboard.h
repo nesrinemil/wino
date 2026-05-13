@@ -67,7 +67,8 @@ private:
     void updateSidebarTheme();
     void applyThemeToCircuit(bool isDark);
     void setupStudentCard(QWidget *card, int studentId, const QString &name, const QString &email,
-                         const QString &phone, const QString &birthDate, const QString &requestedDate);
+                         const QString &phone, const QString &birthDate, const QString &requestedDate,
+                         const QString &cin = {});
     void setupApprovedStudentCard(QWidget *card, int studentId, const QString &name,
                                  const QString &email, const QString &phone,
                                  const QString &cin = {});

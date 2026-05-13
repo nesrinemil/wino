@@ -93,13 +93,10 @@ void SmartDriveWindow::onSidebarNavigation(int index)
     auto *stack = m_learningModule->findChild<AnimatedStackedWidget*>();
     if (!stack) return;
     switch (index) {
-    case 0: case 1: case 2: stack->setCurrentIndexAnimated(0); break;
-    case 3:
-        stack->setCurrentIndexAnimated(
-            (m_learningModule->calculateProgress() >= 100) ? 2 : 0);
-        break;
-    case 4: stack->setCurrentIndexAnimated(3); break;
-    case 5: stack->setCurrentIndexAnimated(4); break;
+    case 0: stack->setCurrentIndexAnimated(0); break;  // Dashboard
+    case 1: stack->setCurrentIndexAnimated(3); break;  // Badges
+    case 2: stack->setCurrentIndexAnimated(4); break;  // Sign Scanner
+    default: stack->setCurrentIndexAnimated(0); break;
     }
 }
 

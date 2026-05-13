@@ -28,7 +28,12 @@ private slots:
 private:
     Ui::AdminDashboard *ui;
     void setupSchoolCard(QWidget *card, int schoolId, const QString &name,
-                        int students, int vehicles, const QString &status);
+                        int students, int vehicles, const QString &status,
+                        const QString &logoPath = QString());
+    void ensureLogoColumn();        // ALTER TABLE driving_schools ADD logo_path
+    void ensureInstrPhotoColumn();  // ALTER TABLE instructors ADD photo_path
+    void uploadLogo(int schoolId);
+    static QPixmap makeCircularPixmap(const QPixmap &src, int size);
 };
 
 #endif // ADMINDASHBOARD_H

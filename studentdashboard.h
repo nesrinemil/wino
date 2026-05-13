@@ -36,7 +36,8 @@ private:
     void loadSchoolsFiltered(const QString &search);
     void setupSchoolCard(QWidget *card, int schoolId, const QString &name,
                         int students, int vehicles, double rating,
-                        int manualCount, int autoCount);
+                        int manualCount, int autoCount,
+                        const QString &logoPath = QString());
 };
 
 #endif // STUDENTDASHBOARD_H

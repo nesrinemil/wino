@@ -62,11 +62,11 @@ void AIRecommendations::setupUI()
     // Header
     QWidget *header = new QWidget();
     header->setObjectName("header");
-    header->setFixedHeight(120);
-    
+    header->setFixedHeight(110);
+
     QVBoxLayout *headerLayout = new QVBoxLayout(header);
-    headerLayout->setContentsMargins(40, 20, 40, 20);
-    headerLayout->setSpacing(5);
+    headerLayout->setContentsMargins(36, 16, 36, 16);
+    headerLayout->setSpacing(4);
     
     QPushButton *backBtn = new QPushButton("← Back to Dashboard");
     backBtn->setObjectName("backBtn");
@@ -115,88 +115,91 @@ void AIRecommendations::onWeatherDataReady()
 void AIRecommendations::updateColors()
 {
     ThemeManager* theme = ThemeManager::instance();
-    
-    // 1. Update Header Styles
+    bool isDarkTheme = theme->currentTheme() == ThemeManager::Dark;
+
+    // ── 1. Header ────────────────────────────────────────────────────────
     QWidget* header = findChild<QWidget*>("header");
     if (header) {
-        header->setStyleSheet(QString("QWidget#header { background-color: %1; border-bottom: 1px solid %2; }")
-                              .arg(theme->headerColor(), theme->borderColor()));
+        header->setStyleSheet(
+            isDarkTheme
+            ? "QWidget#header{"
+              "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+              "stop:0 #0F172A,stop:1 #1E293B);"
+              "border-bottom:2px solid #14B8A6;}"
+            : "QWidget#header{"
+              "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+              "stop:0 #0F766E,stop:1 #0D9488);"
+              "border-bottom:2px solid #14B8A6;}"
+        );
     }
-    
+
     QPushButton* backBtn = findChild<QPushButton*>("backBtn");
     if (backBtn) {
         backBtn->setStyleSheet(
-            "QPushButton {"
-            "    background-color: transparent;"
-            "    color: #14B8A6;"
-            "    font-size: 14px;"
-            "    font-weight: 600;"
-            "    border: none;"
-            "    text-align: left;"
-            "    padding: 0px;"
-            "}"
-            "QPushButton:hover { color: #0D9488; }"
+            "QPushButton{"
+            "background:transparent;color:rgba(255,255,255,0.65);"
+            "font-size:13px;font-weight:500;border:none;text-align:left;padding:0;}"
+            "QPushButton:hover{color:white;}"
         );
     }
-    
+
     QLabel* titleLabel = findChild<QLabel*>("titleLabel");
     if (titleLabel) {
         titleLabel->setStyleSheet(
-            QString("QLabel {"
-            "    color: %1;"
-            "    font-size: 26px;"
-            "    font-weight: bold;"
-            "    padding: 5px 0;"
-            "}").arg(theme->primaryTextColor())
+            "QLabel{color:white;font-size:24px;font-weight:bold;"
+            "background:transparent;padding:4px 0;}"
         );
     }
-    
+
     QLabel* subtitleLabel = findChild<QLabel*>("subtitleLabel");
     if (subtitleLabel) {
         subtitleLabel->setStyleSheet(
-            QString("QLabel {"
-            "    color: %1;"
-            "    font-size: 14px;"
-            "    padding: 0px;"
-            "}").arg(theme->secondaryTextColor())
+            "QLabel{color:rgba(255,255,255,0.6);font-size:13px;"
+            "background:transparent;padding:0;}"
         );
     }
-    
-    // 2. Update Scroll Area & Content Background
+
+    // ── 2. Scroll Area & Content ─────────────────────────────────────────
     QScrollArea* scrollArea = findChild<QScrollArea*>("scrollArea");
     if (scrollArea) {
         scrollArea->setStyleSheet(
-            QString("QScrollArea { background-color: %1; border: none; }"
-                    "QScrollBar:vertical { background-color: %1; width: 10px; }"
-                    "QScrollBar::handle:vertical { background-color: %2; border-radius: 5px; }")
-            .arg(theme->backgroundColor(), theme->secondaryTextColor())
+            QString("QScrollArea{background:%1;border:none;}"
+                    "QScrollBar:vertical{background:%1;width:8px;}"
+                    "QScrollBar::handle:vertical{background:%2;border-radius:4px;min-height:30px;}"
+                    "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}")
+            .arg(theme->backgroundColor(), theme->borderColor())
         );
     }
-    
+
     QWidget* contentWidget = findChild<QWidget*>("contentWidget");
     if (contentWidget) {
-        contentWidget->setStyleSheet(QString("QWidget#contentWidget { background-color: %1; }").arg(theme->backgroundColor()));
-        
-        // 3. Rebuild Content
+        contentWidget->setStyleSheet(
+            QString("QWidget#contentWidget{background:%1;}").arg(theme->backgroundColor())
+        );
+
+        // ── 3. Rebuild Content ───────────────────────────────────────────
         qDeleteAll(contentWidget->children());
         QVBoxLayout *contentLayout = new QVBoxLayout(contentWidget);
-        contentLayout->setContentsMargins(40, 40, 40, 40);
-        contentLayout->setSpacing(30);
-        
+        contentLayout->setContentsMargins(32, 28, 32, 32);
+        contentLayout->setSpacing(24);
+
         // Weather-Powered Recommendations
         WeatherService *weather = WeatherService::instance();
-        bool isDark = theme->currentTheme() == ThemeManager::Dark;
-             if (weather->hasData()) {
-            // ── Weather Status Banner ──
+        bool isDark = isDarkTheme;
+        if (weather->hasData()) {
+            // ── Weather Status Banner ──────────────────────────────────────
             QFrame *weatherBanner = new QFrame();
             weatherBanner->setStyleSheet(
-                QString("QFrame { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-                        "stop:0 %1, stop:1 %2); border-radius: 12px; }")
-                .arg(isDark ? "#134E4A" : "#F0FDFA", isDark ? "#1E293B" : "#ECFDF5")
+                QString("QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                        "stop:0 %1,stop:1 %2);"
+                        "border-radius:14px;border:1px solid %3;}")
+                .arg(isDark ? "#0D3B36" : "#F0FDFA",
+                     isDark ? "#1E293B" : "#ECFDF5",
+                     isDark ? "#14B8A6" : "#99F6E4")
             );
             QHBoxLayout *bannerLayout = new QHBoxLayout(weatherBanner);
-            bannerLayout->setContentsMargins(25, 20, 25, 20);
-            bannerLayout->setSpacing(15);
+            bannerLayout->setContentsMargins(22, 18, 22, 18);
+            bannerLayout->setSpacing(14);
             
             QLabel *weatherIcon = new QLabel("🌍");
             weatherIcon->setStyleSheet("font-size: 32px; border: none; background: transparent;");
@@ -347,22 +350,41 @@ void AIRecommendations::updateColors()
                 }
             }
 
-            // ── Section title ─────────────────────────────────────────────────────
+            // ── Section title ─────────────────────────────────────────────
             {
-                QLabel *recsTitle = new QLabel("🎯 Recommandations personnalisées");
-                recsTitle->setStyleSheet(QString(
-                    "QLabel{color:%1;font-size:22px;font-weight:bold;margin-bottom:10px;}")
-                    .arg(theme->primaryTextColor()));
-                contentLayout->addWidget(recsTitle);
+                QFrame *titleBar = new QFrame();
+                titleBar->setStyleSheet(
+                    QString("QFrame{background:%1;border-radius:12px;border:none;}")
+                    .arg(isDark ? "#1E293B" : theme->cardColor())
+                );
+                QVBoxLayout *tbLay = new QVBoxLayout(titleBar);
+                tbLay->setContentsMargins(20, 16, 20, 16);
+                tbLay->setSpacing(4);
+
+                QLabel *recsTitle = new QLabel(
+                    QString::fromUtf8("\xf0\x9f\x8e\xaf  Recommandations personnalis\xc3\xa9""es")
+                );
+                recsTitle->setStyleSheet(
+                    QString("QLabel{color:%1;font-size:20px;font-weight:bold;background:transparent;}")
+                    .arg(theme->primaryTextColor())
+                );
+                tbLay->addWidget(recsTitle);
 
                 QString sub = (isCircuit && !weakPoints.isEmpty())
-                    ? QString("Séances ciblées sur vos %1 point(s) faible(s) identifié(s) — combinées avec la météo et vos créneaux préférés").arg(weakPoints.size())
-                    : "Séances optimisées selon météo, créneaux favorables et disponibilités instructeur";
+                    ? QString::fromUtf8(
+                        "S\xc3\xa9""ances cibl\xc3\xa9""es sur vos %1 point(s) faible(s) "
+                        "\xe2\x80\x94 m\xc3\xa9""t\xc3\xa9""o + cr\xc3\xa9""neaux pr\xc3\xa9""f\xc3\xa9""r\xc3\xa9""s")
+                          .arg(weakPoints.size())
+                    : QString::fromUtf8(
+                        "S\xc3\xa9""ances optimis\xc3\xa9""es selon m\xc3\xa9""t\xc3\xa9""o, "
+                        "cr\xc3\xa9""neaux favorables et disponibilit\xc3\xa9""s instructeur");
                 QLabel *recsSub = new QLabel(sub);
-                recsSub->setStyleSheet(QString(
-                    "QLabel{color:%1;font-size:13px;font-style:italic;}")
-                    .arg(theme->secondaryTextColor()));
-                contentLayout->addWidget(recsSub);
+                recsSub->setStyleSheet(
+                    QString("QLabel{color:%1;font-size:13px;background:transparent;}")
+                    .arg(theme->secondaryTextColor())
+                );
+                tbLay->addWidget(recsSub);
+                contentLayout->addWidget(titleBar);
             }
 
             // ── Student preferred time ────────────────────────────────────────────
@@ -513,9 +535,9 @@ void AIRecommendations::updateColors()
                 });
             }
 
-            // ── Render grid (2 columns) ───────────────────────────────────────────
+            // ── Render grid (2 columns) ──────────────────────────────────
             QGridLayout *gridLayout = new QGridLayout();
-            gridLayout->setSpacing(20);
+            gridLayout->setSpacing(18);
             gridLayout->setColumnStretch(0, 1);
             gridLayout->setColumnStretch(1, 1);
 
@@ -573,23 +595,29 @@ QWidget* AIRecommendations::createWeatherRecommendationCard(const QDate& date, c
     int suitability = WeatherService::weatherCodeToSuitability(weather.weatherCode);
     
     QFrame *card = new QFrame();
+    // Top-accent color based on suitability
+    QString accentCol = suitability >= 80 ? "#14B8A6"
+                      : suitability >= 60 ? "#3B82F6"
+                      : suitability >= 40 ? "#F59E0B" : "#EF4444";
     card->setStyleSheet(
-        QString("QFrame {"
-        "    background-color: %1;"
-        "    border-radius: 12px;"
-        "}").arg(theme->cardColor())
+        QString("QFrame{"
+                "background:%1;"
+                "border-radius:16px;"
+                "border:1px solid %2;"
+                "border-top:3px solid %3;}")
+        .arg(theme->cardColor(), theme->borderColor(), accentCol)
     );
-    
+
     QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect();
-    shadow->setBlurRadius(15);
+    shadow->setBlurRadius(isDark ? 30 : 20);
     shadow->setXOffset(0);
-    shadow->setYOffset(3);
-    shadow->setColor(QColor(0, 0, 0, 10));
+    shadow->setYOffset(isDark ? 8 : 4);
+    shadow->setColor(QColor(0, 0, 0, isDark ? 40 : 12));
     card->setGraphicsEffect(shadow);
-    
+
     QVBoxLayout *layout = new QVBoxLayout(card);
-    layout->setContentsMargins(25, 25, 25, 25);
-    layout->setSpacing(12);
+    layout->setContentsMargins(22, 20, 22, 20);
+    layout->setSpacing(10);
     
     // ── Header: Weather icon + date + suitability badge ──
     QHBoxLayout *headerLayout = new QHBoxLayout();
@@ -816,18 +844,13 @@ QWidget* AIRecommendations::createWeatherRecommendationCard(const QDate& date, c
         }
         
         bookBtn->setStyleSheet(
-            QString("QPushButton {"
-                    "    background-color: %1;"
-                    "    color: white;"
-                    "    font-weight: bold;"
-                    "    border-radius: 8px;"
-                    "    padding: 10px;"
-                    "    font-size: 13px;"
-                    "    border: none;"
-                    "}"
-                    "QPushButton:hover {"
-                    "    background-color: %2;"
-                    "}").arg(btnBg, btnHover)
+            QString("QPushButton{"
+                    "background:%1;color:white;font-weight:bold;"
+                    "border-radius:10px;padding:11px 16px;"
+                    "font-size:14px;border:none;letter-spacing:0.3px;}"
+                    "QPushButton:hover{background:%2;}"
+                    "QPushButton:pressed{background:%2;}")
+            .arg(btnBg, btnHover)
         );
         bookBtn->setCursor(Qt::PointingHandCursor);
         

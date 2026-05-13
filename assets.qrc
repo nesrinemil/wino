@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/assets">
         <file alias="wino_logo.png">assets/wino_logo.png</file>
+        <file alias="logo2.png">assets/logo2.png</file>
         <file alias="circuit1.png">assets/circuit1.png</file>
         <file alias="circuit2.png">assets/circuit2.png</file>
         <file alias="circuit3.png">assets/circuit3.png</file>
@@ -14,5 +15,6 @@
         <file>assets/radiodot.svg</file>
         <file>assets/arrow-up.svg</file>
         <file>assets/arrow-down.svg</file>
+        <file alias="jalel.svg">assets/jalel.svg</file>
     </qresource>
 </RCC>

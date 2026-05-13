@@ -274,7 +274,7 @@ QWidget *ParcourCircuitWidget::buildTopBar()
     icon->setStyleSheet("font-size:22px;background:transparent;");
 
     QLabel *title = new QLabel(
-        QString::fromUtf8("Parcours Circuit \xe2\x80\x94 Tableau de bord Moniteur"));
+        QString::fromUtf8("Circuit Course \xe2\x80\x94 Instructor Dashboard"));
     title->setStyleSheet(
         "font-size:16px;font-weight:700;color:white;background:transparent;");
 
@@ -370,7 +370,7 @@ QWidget *ParcourCircuitWidget::buildSessionCard()
 
     // Mode Examen toggle button
     m_examBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x93\x9d Mode Examen : NON"), card);
+        QString::fromUtf8("\xf0\x9f\x93\x9d Exam Mode: OFF"), card);
     m_examBtn->setCheckable(true);
     m_examBtn->setChecked(false);
     m_examBtn->setStyleSheet(
@@ -387,8 +387,8 @@ QWidget *ParcourCircuitWidget::buildSessionCard()
     connect(m_examBtn, &QPushButton::toggled, this, [this](bool checked){
         m_examMode = checked;
         m_examBtn->setText(checked
-            ? QString::fromUtf8("\xf0\x9f\x93\x9d Mode Examen : OUI")
-            : QString::fromUtf8("\xf0\x9f\x93\x9d Mode Examen : NON"));
+            ? QString::fromUtf8("\xf0\x9f\x93\x9d Exam Mode: ON")
+            : QString::fromUtf8("\xf0\x9f\x93\x9d Exam Mode: OFF"));
     });
 
     btnRow->addWidget(m_startBtn);
@@ -506,7 +506,7 @@ QWidget *ParcourCircuitWidget::buildArduinoCard()
         "QScrollBar:vertical{width:4px;background:transparent;}"
         "QScrollBar::handle:vertical{background:#4f46e5;border-radius:2px;}");
     m_arduinoLog->setPlaceholderText(
-        QString::fromUtf8("En attente de connexion Arduino...\nPort: COM3 (HC-05 Bluetooth)"));
+        QString::fromUtf8("Waiting for Arduino connection...\nPort: COM3 (HC-05 Bluetooth)"));
     lay->addWidget(m_arduinoLog, 1);
 
     // ── Live sensor bar ──────────────────────────────────────────────────────
@@ -631,11 +631,11 @@ QWidget *ParcourCircuitWidget::buildHistoryCard()
 
     QHBoxLayout *titleRow = new QHBoxLayout;
     QLabel *title = new QLabel(
-        QString::fromUtf8("\xf0\x9f\x93\x8a  Historique des Sessions \xe2\x80\x94 Parcours Circuit"));
+        QString::fromUtf8("\xf0\x9f\x93\x8a  Session History \xe2\x80\x94 Circuit Course"));
     title->setStyleSheet("font-size:14px;font-weight:700;color:#1e293b;");
 
     QPushButton *refreshBtn = new QPushButton(
-        QString::fromUtf8("\xf0\x9f\x94\x84 Rafra\xc3\xae" "chir"));
+        QString::fromUtf8("\xf0\x9f\x94\x84 Refresh"));
     refreshBtn->setStyleSheet(
         "QPushButton{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;"
         "border-radius:6px;padding:5px 12px;font-size:11px;}"
@@ -694,9 +694,9 @@ QWidget *ParcourCircuitWidget::buildHistoryCard()
         QString::fromUtf8("\xc3\x89tapes"),
         "Score",
         "Stress",
-        QString::fromUtf8("Anxi\xc3\xa9t\xc3\xa9"),
-        "Fautes",
-        "Statut",
+        "Anxiety",
+        "Faults",
+        "Status",
         "Examen"
     });
     m_historyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -805,10 +805,10 @@ void ParcourCircuitWidget::startSession()
     // Do NOT clear the log — keep all Arduino boot messages visible
     updateStepUI();
     showFloatingMessage(
-        QString::fromUtf8("\xf0\x9f\x9a\xa6 Session d\xc3\xa9marr\xc3\xa9" "e !"),
+        QString::fromUtf8("\xf0\x9f\x9a\xa6 Session started!"),
         "#10b981");
     appendArduinoMessage(
-        QString::fromUtf8(">>> Session Parcours Circuit d\xc3\xa9marr\xc3\xa9" "e <<<"));
+        QString::fromUtf8(">>> Circuit Course Session started <<<"));
 }
 
 void ParcourCircuitWidget::endSession()
@@ -933,7 +933,7 @@ void ParcourCircuitWidget::onConnectArduino()
                 sendToArduino(m_activeMode);
                 if (m_connStatus)
                     m_connStatus->setText(
-                        QString::fromUtf8("\xf0\x9f\x9f\xa2 COM3 \xe2\x80\x94 attente r\xc3\xa9ponse Arduino..."));
+                        QString::fromUtf8("\xf0\x9f\x9f\xa2 COM3 \xe2\x80\x94 waiting for Arduino response..."));
             });
         }
         // First attempt after 2s, then every 2s after that
@@ -1082,9 +1082,9 @@ void ParcourCircuitWidget::onConnectLight(const QString &port)
     } else {
         if (m_lightStatus)
             m_lightStatus->setText(
-                QString::fromUtf8("\xe2\x9d\x8c Erreur: ") + m_serialLight->errorString());
+                QString::fromUtf8("\xe2\x9d\x8c Error: ") + m_serialLight->errorString());
         appendArduinoMessage(
-            QString::fromUtf8("!!! [FEU] Connexion \xc3\xa9""chou\xc3\xa9""e sur ")
+            QString::fromUtf8("!!! [LIGHT] Connection failed on ")
             + port + ": " + m_serialLight->errorString());
     }
 }
@@ -1387,7 +1387,7 @@ void ParcourCircuitWidget::parseSensorLine(const QString &line)
         if (stepMs > 20000) {
             m_advancePending = true;
             showFloatingMessage(
-                QString::fromUtf8("\xf0\x9f\x8f\x81 Parcours termin\xc3\xa9 !"), "#4ade80");
+                QString::fromUtf8("\xf0\x9f\x8f\x81 Course completed!"), "#4ade80");
             QTimer::singleShot(500, this, [this]{
                 if (m_sessionActive) endSession();
             });
@@ -1950,7 +1950,7 @@ void ParcourCircuitWidget::showSessionAnalysis()
     QDialog *dlg = new QDialog(this);
     dlg->setWindowFlags(Qt::Dialog | Qt::WindowCloseButtonHint);
     dlg->setWindowTitle(
-        QString::fromUtf8("Analyse de Session \xe2\x80\x94 Parcours Circuit"));
+        QString::fromUtf8("Session Analysis \xe2\x80\x94 Circuit Course"));
     dlg->setMinimumSize(660, 580);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setStyleSheet("background:#f0f2f5;");

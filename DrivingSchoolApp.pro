@@ -43,7 +43,8 @@ SOURCES += \
     ../9/circularprogressbar.cpp \
     ../9/sectioncard.cpp \
     ../9/animatedstackedwidget.cpp \
-    ../9/trafficsignwidget.cpp
+    ../9/trafficsignwidget.cpp \
+    ../9/examwidget.cpp
 
 HEADERS += \
     ../9/databasemanager.h \
@@ -55,7 +56,8 @@ HEADERS += \
     ../9/circularprogressbar.h \
     ../9/sectioncard.h \
     ../9/animatedstackedwidget.h \
-    ../9/trafficsignwidget.h
+    ../9/trafficsignwidget.h \
+    ../9/examwidget.h
 
 # Make TACHE headers findable by their short names
 INCLUDEPATH += ../9

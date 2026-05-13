@@ -1270,7 +1270,7 @@ QWidget* WinoInstructorDashboard::createPaymentSection()
             }
         }
         if (count == 0) {
-            QLabel *empty = new QLabel("🎉 Aucun paiement en attente!");
+            QLabel *empty = new QLabel("🎉 No pending payments!");
             empty->setStyleSheet(QString("QLabel { color: %1; font-size: 16px; font-style: italic; min-height: 50px; }").arg(theme->secondaryTextColor()));
             empty->setAlignment(Qt::AlignCenter);
             cardsGrid->addWidget(empty, 0, 0, 1, 2);
@@ -1341,7 +1341,7 @@ QWidget* WinoInstructorDashboard::createPaymentCard(int paymentId, const QString
     nameLayout->addWidget(nameLbl);
     nameLayout->addWidget(typeLbl);
     
-    QLabel *badge = new QLabel("En attente");
+    QLabel *badge = new QLabel("Pending");
     QString badgeBg = isDark ? "#7C2D12" : "#FFF7ED";
     QString badgeColor = isDark ? "#FDBA74" : "#EA580C";
     QString badgeBorder = isDark ? "#C2410C" : "#FDBA74";
@@ -1373,7 +1373,7 @@ QWidget* WinoInstructorDashboard::createPaymentCard(int paymentId, const QString
     QLabel *dateIcon = new QLabel("🕐");
     dateIcon->setStyleSheet("font-size: 13px; border: none; background: transparent;");
     dateIcon->setFixedWidth(20);
-    QLabel *dateLabelLbl = new QLabel("Date séance:");
+    QLabel *dateLabelLbl = new QLabel("Session date:");
     dateLabelLbl->setStyleSheet(QString("QLabel { color: %1; font-size: 12px; border: none; background: transparent; }").arg(theme->secondaryTextColor()));
     QLabel *dateValueLbl = new QLabel(sessionDate);
     dateValueLbl->setStyleSheet(QString("QLabel { color: %1; font-size: 12px; font-weight: 600; border: none; background: transparent; }").arg(theme->primaryTextColor()));
@@ -1572,8 +1572,8 @@ void WinoInstructorDashboard::onNextWeek()
 
 void WinoInstructorDashboard::onVerifyPayment(int paymentId, const QString& studentName)
 {
-    QMessageBox::StandardButton reply = QMessageBox::question(this, "Confirmer le paiement",
-        QString("Êtes-vous sûr de vouloir valider le paiement D17 reçu de %1 ?").arg(studentName),
+    QMessageBox::StandardButton reply = QMessageBox::question(this, "Confirm Payment",
+        QString("Are you sure you want to confirm the D17 payment received from %1?").arg(studentName),
         QMessageBox::Yes | QMessageBox::No);
         
     if (reply == QMessageBox::Yes) {
@@ -1597,21 +1597,21 @@ void WinoInstructorDashboard::onVerifyPayment(int paymentId, const QString& stud
         }
         
         if (updated) {
-            QMessageBox::information(this, "Succès", "Paiement validé avec le statut : " + finalStatus);
+            QMessageBox::information(this, "Success", "Payment confirmed with status: " + finalStatus);
             QPushButton* btn = qobject_cast<QPushButton*>(sender());
             if (btn && btn->parentWidget() && btn->parentWidget()->parentWidget()) {
                 btn->parentWidget()->parentWidget()->hide();
             }
         } else {
-            QMessageBox::critical(this, "Erreur", "Tous les statuts testés ont échoué.\nErreur finale : " + lastErr);
+            QMessageBox::critical(this, "Error", "All tested statuses failed.\nFinal error: " + lastErr);
         }
     }
 }
 
 void WinoInstructorDashboard::onRejectPayment(int paymentId, const QString& studentName)
 {
-    QMessageBox::StandardButton reply = QMessageBox::warning(this, "Rejeter le paiement",
-        QString("Êtes-vous sûr de vouloir rejeter le paiement de %1 ?").arg(studentName),
+    QMessageBox::StandardButton reply = QMessageBox::warning(this, "Reject Payment",
+        QString("Are you sure you want to reject the payment from %1?").arg(studentName),
         QMessageBox::Yes | QMessageBox::No);
         
     if (reply == QMessageBox::Yes) {
@@ -1635,13 +1635,13 @@ void WinoInstructorDashboard::onRejectPayment(int paymentId, const QString& stud
         }
         
         if (updated) {
-            QMessageBox::information(this, "Rejeté", "Paiement rejeté avec le statut : " + finalStatus);
+            QMessageBox::information(this, "Rejected", "Payment rejected with status: " + finalStatus);
             QPushButton* btn = qobject_cast<QPushButton*>(sender());
             if (btn && btn->parentWidget() && btn->parentWidget()->parentWidget()) {
                 btn->parentWidget()->parentWidget()->hide();
             }
         } else {
-            QMessageBox::critical(this, "Erreur DB", "Tous les statuts testés ont échoué.\nErreur finale : " + lastErr);
+            QMessageBox::critical(this, "DB Error", "All tested statuses failed.\nFinal error: " + lastErr);
         }
     }
 }
@@ -2867,7 +2867,7 @@ QWidget* WinoInstructorDashboard::createStudentsSection()
     }
 
     if (!hasData) {
-        QLabel *empty = new QLabel("Aucun étudiant en phase circuit ne vous est actuellement assigné.");
+        QLabel *empty = new QLabel("No circuit-phase students are currently assigned to you.");
         empty->setAlignment(Qt::AlignCenter);
         empty->setStyleSheet(QString("QLabel { color: %1; font-size: 15px; font-style: italic; margin-top: 30px; }").arg(theme->secondaryTextColor()));
         scrollLayout->addWidget(empty);

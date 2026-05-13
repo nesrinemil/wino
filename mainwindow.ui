@@ -123,8 +123,8 @@ QPushButton#btnCreateAccount { background: transparent; border: none; color: #0d
 QPushButton#btnCreateAccount:hover { color: #14B8A6; background: transparent; }
 QPushButton#btnBackToLogin { background: transparent; border: none; color: #374151; font-weight: 600; font-size: 13px; padding: 4px; min-height: 0; }
 QPushButton#btnBackToLogin:hover { color: #0f172a; background: transparent; }
-QPushButton#btnAutomate { background: rgba(255,255,255,0.25); border: 2px solid rgba(255,255,255,0.70); color: #0f172a; padding: 8px 20px; border-radius: 10px; font-weight: 800; font-size: 13px; min-height: 0; }
-QPushButton#btnAutomate:hover { background: rgba(255,255,255,0.50); border-color: #ffffff; }
+QPushButton#btnAutomate { background: #ffffff; border: none; color: #0d9488; padding: 8px 22px; border-radius: 20px; font-weight: 700; font-size: 13px; min-height: 0; }
+QPushButton#btnAutomate:hover { background: #f0fdfa; color: #0f766e; }
 QPushButton#btnScanFingerprint { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #14B8A6,stop:1 #0d9488); color: white; padding: 16px 28px; border-radius: 14px; font-size: 16px; font-weight: 800; min-width: 300px; border: none; }
 QPushButton#btnScanFingerprint:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2dd4c1,stop:1 #14B8A6); }
 QPushButton#btnScanFingerprint:disabled { background: rgba(107,114,128,0.50); color: rgba(255,255,255,0.60); }
@@ -1086,55 +1086,6 @@ QProgressDialog QPushButton { background: rgba(107,114,128,0.80); color: #ffffff
            <string/>
           </property>
           <layout class="QHBoxLayout" name="docsColumns">
-           <item>
-            <widget class="QGroupBox" name="groupDocs">
-             <property name="title">
-              <string>Documents</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_docsGroup">
-              <item>
-               <widget class="QCheckBox" name="chkCIN">
-                <property name="text">
-                 <string>I have my CIN (National ID Card)</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QCheckBox" name="chkPhoto">
-                <property name="text">
-                 <string>I have my Face Photo</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QGroupBox" name="groupMedical">
-                <property name="title">
-                 <string>Medical Certificate (Optional)</string>
-                </property>
-                <layout class="QVBoxLayout" name="verticalLayout_medical">
-                 <item>
-                  <widget class="QLabel" name="labelNoDoc">
-                   <property name="text">
-                    <string>No document scanned yet</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="btnScanMed">
-                   <property name="cursor">
-                    <cursorShape>PointingHandCursor</cursorShape>
-                   </property>
-                   <property name="text">
-                    <string>Scan Medical Certificate</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
            <item>
             <widget class="QGroupBox" name="groupCourse">
              <property name="title">

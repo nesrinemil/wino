@@ -60,69 +60,10 @@ void WinoAssistantWidget::setupUI()
     mainL->setContentsMargins(0,0,0,0);
     mainL->setSpacing(0);
 
-    // ── Header ──
-    QFrame *header = new QFrame(this);
-    header->setFixedHeight(70);
-    header->setObjectName("waHeader");
-    header->setStyleSheet(
-        "QFrame#waHeader{"
-        "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "  stop:0 #00b894, stop:1 #00cec9);"
-        "  border: none;"
-        "}");
-
-    QHBoxLayout *hL = new QHBoxLayout(header);
-    hL->setContentsMargins(20,0,20,0);
-    hL->setSpacing(14);
-
-    // Avatar
-    QLabel *avatar = new QLabel(header);
-    avatar->setFixedSize(44,44);
-    avatar->setAlignment(Qt::AlignCenter);
-    avatar->setStyleSheet(
-        "QLabel{background:#fff;border-radius:22px;font-size:22px;border:none;}");
-    avatar->setText(QString::fromUtf8("\xf0\x9f\xa4\x96"));
-    hL->addWidget(avatar);
-
-    // Name + status
-    QVBoxLayout *nameL = new QVBoxLayout();
-    nameL->setSpacing(2);
-    QLabel *nameLabel = new QLabel("Assistant Wino", header);
-    nameLabel->setStyleSheet(
-        "QLabel{font-size:16px;font-weight:bold;color:white;"
-        "background:transparent;border:none;}");
-    nameL->addWidget(nameLabel);
-
-    QHBoxLayout *statusRow = new QHBoxLayout();
-    statusRow->setSpacing(5);
-    QLabel *dot = new QLabel(QString::fromUtf8("\xf0\x9f\xa4\x96"), header);
-    dot->setStyleSheet("QLabel{font-size:11px;background:transparent;border:none;}");
-    statusRow->addWidget(dot);
-    QLabel *statusLbl = new QLabel("AI Gemini — Online", header);
-    statusLbl->setStyleSheet(
-        "QLabel{font-size:11px;color:rgba(255,255,255,0.85);"
-        "background:transparent;border:none;}");
-    statusRow->addWidget(statusLbl);
-    statusRow->addStretch();
-    nameL->addLayout(statusRow);
-
-    hL->addLayout(nameL, 1);
-
-    // Settings gear
-    m_settingsBtn = new QPushButton(header);
-    m_settingsBtn->setFixedSize(36,36);
-    m_settingsBtn->setCursor(Qt::PointingHandCursor);
-    m_settingsBtn->setToolTip("Configure API key");
-    m_settingsBtn->setStyleSheet(
-        "QPushButton{background:rgba(255,255,255,0.15);border:none;border-radius:18px;"
-        "font-size:18px;color:white;}"
-        "QPushButton:hover{background:rgba(255,255,255,0.30);}");
-    m_settingsBtn->setText(QString::fromUtf8("\xe2\x9a\x99\xef\xb8\x8f"));
-    connect(m_settingsBtn, &QPushButton::clicked,
-            this, &WinoAssistantWidget::showApiKeyDialog);
-    hL->addWidget(m_settingsBtn);
-
-    mainL->addWidget(header);
+    // Header hidden — panel header in StudentLearningHub replaces it.
+    // Settings button kept as hidden member so showApiKeyDialog() still works.
+    m_settingsBtn = new QPushButton(this);
+    m_settingsBtn->setVisible(false);
 
     // ── Chat area ──
     m_chatScroll = new QScrollArea(this);

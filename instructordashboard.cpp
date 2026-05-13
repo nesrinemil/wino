@@ -31,7 +31,7 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
     ui->setupUi(this);
     setWindowTitle("Wino - Module 2 - Instructor Space");
 
-    connect(ui->logoutButton, &QPushButton::clicked, this, &InstructorDashboard::onLogoutClicked);
+    // logoutButton removed from top bar — logout is now in the sidebar only
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &InstructorDashboard::switchTab);
 
     // ── Circuit Analysis tab (index 3) ───────────────────────────────────────
@@ -80,22 +80,39 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
     sideLayout->setContentsMargins(0, 0, 0, 0);
     sideLayout->setSpacing(0);
 
-    // Brand header
-    QLabel *sideLogo = new QLabel(QString::fromUtf8("🏫"), instrSidebar);
+    // Brand header — WINO logo2.png replacing house emoji + "SmartDrive" text
+    QLabel *sideLogo = new QLabel(instrSidebar);
     sideLogo->setAlignment(Qt::AlignCenter);
-    sideLogo->setStyleSheet("font-size: 32px; padding: 20px 0 4px 0;");
-
-    QLabel *sideBrand = new QLabel("SmartDrive", instrSidebar);
-    sideBrand->setAlignment(Qt::AlignCenter);
-    sideBrand->setStyleSheet(
-        "font-size: 16px; font-weight: bold; color: #14B8A6; padding-bottom: 2px;");
+    sideLogo->setStyleSheet("padding: 16px 0 4px 0; background: transparent;");
+    {
+        QPixmap logo(":/assets/logo2.png");
+        if (logo.isNull())
+            logo.load("C:/Users/hboug/OneDrive/Desktop/maryem/assets/logo2.png");
+        if (!logo.isNull()) {
+            // Scale to fit sidebar width (sidebar=230px, logo width max 160px)
+            QPixmap scaled = logo.scaledToWidth(160, Qt::SmoothTransformation);
+            // Auto-crop transparent borders
+            QImage img = scaled.toImage().convertToFormat(QImage::Format_ARGB32);
+            int top = 0, bottom = img.height() - 1;
+            for (int y = 0; y < img.height() && top == 0; ++y)
+                for (int x = 0; x < img.width(); ++x)
+                    if (qAlpha(img.pixel(x, y)) > 10) { top = y; break; }
+            for (int y = img.height()-1; y >= 0 && bottom == img.height()-1; --y)
+                for (int x = 0; x < img.width(); ++x)
+                    if (qAlpha(img.pixel(x, y)) > 10) { bottom = y; break; }
+            top    = qMax(0, top - 4);
+            bottom = qMin(img.height()-1, bottom + 4);
+            QPixmap cropped = scaled.copy(0, top, scaled.width(), bottom - top + 1);
+            sideLogo->setPixmap(cropped);
+            sideLogo->setFixedHeight(cropped.height() + 20); // +20 for top padding
+        }
+    }
 
     QLabel *sideSub = new QLabel("Instructor Space", instrSidebar);
     sideSub->setAlignment(Qt::AlignCenter);
     sideSub->setStyleSheet("font-size: 11px; color: #64748B; padding-bottom: 12px;");
 
     sideLayout->addWidget(sideLogo);
-    sideLayout->addWidget(sideBrand);
     sideLayout->addWidget(sideSub);
 
     // Helper: horizontal divider
@@ -166,6 +183,170 @@ InstructorDashboard::InstructorDashboard(QWidget *parent) :
                                  : QString::fromUtf8("  🌙   Dark Mode"));
     m_themeBtn->setCursor(Qt::PointingHandCursor);
     sideLayout->addWidget(m_themeBtn);
+
+    // ── Settings button ───────────────────────────────────────────────────────
+    QPushButton *settingsBtn = new QPushButton(instrSidebar);
+    settingsBtn->setFixedHeight(48);
+    settingsBtn->setText(QString::fromUtf8("  ⚙️   Settings"));
+    settingsBtn->setCursor(Qt::PointingHandCursor);
+    settingsBtn->setStyleSheet(
+        "QPushButton { background: transparent; color: #94A3B8; "
+        "border: none; border-left: 3px solid transparent; "
+        "text-align: left; padding-left: 16px; "
+        "font-size: 14px; font-weight: 500; border-radius: 0; }"
+        "QPushButton:hover { background: rgba(148,163,184,0.10); color: #CBD5E1; }");
+    connect(settingsBtn, &QPushButton::clicked, this, [this]() {
+        // ── Settings dialog ───────────────────────────────────────────────
+        QDialog *dlg = new QDialog(this);
+        dlg->setWindowTitle("Settings");
+        dlg->setFixedWidth(400);
+        dlg->setStyleSheet(
+            "QDialog { background: white; }"
+            "QLabel  { color: #374151; }"
+            "QLineEdit { border:1px solid #D1D5DB; border-radius:6px; padding:8px 10px;"
+            "            font-size:13px; background:#F9FAFB; color:#1F1827; }"
+            "QLineEdit:focus { border-color:#14B8A6; background:white; }");
+
+        QVBoxLayout *root = new QVBoxLayout(dlg);
+        root->setContentsMargins(28, 24, 28, 24);
+        root->setSpacing(14);
+
+        // Header
+        QLabel *titleLbl = new QLabel("⚙️  Settings");
+        titleLbl->setStyleSheet("font-size:18px; font-weight:bold; color:#1F1827;");
+        root->addWidget(titleLbl);
+
+        QFrame *sep = new QFrame(); sep->setFrameShape(QFrame::HLine);
+        sep->setStyleSheet("background:#E5E7EB;"); sep->setFixedHeight(1);
+        root->addWidget(sep);
+
+        // ── Instructor profile section ────────────────────────────────────
+        QLabel *profLbl = new QLabel("👤  Instructor Profile");
+        profLbl->setStyleSheet("font-size:13px; font-weight:bold; color:#6B7280; text-transform:uppercase;");
+        root->addWidget(profLbl);
+
+        // Fetch current instructor data
+        QString curName, curEmail, curPhoto;
+        if (instructorId > 0) {
+            QSqlQuery pq(QSqlDatabase::database());
+            pq.prepare("SELECT full_name, email, photo_path FROM instructors WHERE id = ?");
+            pq.addBindValue(instructorId);
+            if (pq.exec() && pq.next()) {
+                curName  = pq.value(0).toString();
+                curEmail = pq.value(1).toString();
+                curPhoto = pq.value(2).toString();
+            }
+        }
+
+        // Circular photo preview + upload button
+        const int IPRV = 64;
+        QLabel *photoPreview = new QLabel();
+        photoPreview->setFixedSize(IPRV, IPRV);
+        photoPreview->setAlignment(Qt::AlignCenter);
+        auto *photoPathPtr = new QString(curPhoto);
+
+        auto makeCircle = [](const QPixmap &src, int sz) -> QPixmap {
+            QPixmap scaled = src.scaled(sz, sz, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            QPixmap result(sz, sz); result.fill(Qt::transparent);
+            QPainter pp(&result); pp.setRenderHint(QPainter::Antialiasing);
+            QPainterPath path; path.addEllipse(0, 0, sz, sz);
+            pp.setClipPath(path);
+            int xOff = (scaled.width()-sz)/2, yOff = (scaled.height()-sz)/2;
+            pp.drawPixmap(-xOff, -yOff, scaled);
+            return result;
+        };
+
+        auto refreshPreview = [=]() {
+            QPixmap src;
+            if (!photoPathPtr->isEmpty() && QFile::exists(*photoPathPtr) && src.load(*photoPathPtr)) {
+                photoPreview->setPixmap(makeCircle(src, IPRV));
+                photoPreview->setStyleSheet("border-radius:32px; border:2px solid #14B8A6;");
+            } else {
+                QPixmap pm(IPRV, IPRV); pm.fill(Qt::transparent);
+                QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
+                pp.setBrush(QColor("#14B8A6")); pp.setPen(Qt::NoPen);
+                pp.drawEllipse(0, 0, IPRV, IPRV);
+                pp.setPen(Qt::white);
+                QFont f = pp.font(); f.setPointSize(22); f.setBold(true); pp.setFont(f);
+                pp.drawText(QRect(0,0,IPRV,IPRV), Qt::AlignCenter,
+                            curName.isEmpty() ? "?" : QString(curName[0].toUpper()));
+                photoPreview->setPixmap(pm);
+                photoPreview->setStyleSheet("border-radius:32px; border:2px dashed #14B8A6;");
+            }
+        };
+        refreshPreview();
+
+        QPushButton *photoBtn = new QPushButton(QString::fromUtf8("📷  Change Photo"));
+        photoBtn->setStyleSheet(
+            "QPushButton { background:#f0fdfa; border:1.5px solid #14B8A6; color:#0d9488;"
+            " border-radius:7px; padding:6px 16px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#ccfbf1; }");
+        QLabel *photoNameLbl = new QLabel(curPhoto.isEmpty()
+            ? QString::fromUtf8("No photo")
+            : QFileInfo(curPhoto).fileName());
+        photoNameLbl->setStyleSheet("color:#9ca3af; font-size:11px;");
+
+        connect(photoBtn, &QPushButton::clicked, dlg, [=]() mutable {
+            QString path = QFileDialog::getOpenFileName(dlg,
+                QString::fromUtf8("Choose photo"), QString(),
+                "Images (*.png *.jpg *.jpeg *.bmp *.webp)");
+            if (path.isEmpty()) return;
+            *photoPathPtr = path;
+            refreshPreview();
+            photoNameLbl->setText(QFileInfo(path).fileName());
+            photoNameLbl->setStyleSheet("color:#0d9488; font-size:11px;");
+        });
+
+        QHBoxLayout *photoRow = new QHBoxLayout();
+        photoRow->setSpacing(14);
+        QVBoxLayout *photoBtnCol = new QVBoxLayout(); photoBtnCol->setSpacing(5);
+        photoBtnCol->addWidget(photoBtn);
+        photoBtnCol->addWidget(photoNameLbl);
+        photoBtnCol->addStretch();
+        photoRow->addWidget(photoPreview);
+        photoRow->addLayout(photoBtnCol, 1);
+        root->addLayout(photoRow);
+
+        // Name & email fields
+        QLineEdit *nameEdit = new QLineEdit(curName);
+        nameEdit->setPlaceholderText("Full name");
+        nameEdit->setMinimumHeight(38);
+        QLineEdit *emailEdit = new QLineEdit(curEmail);
+        emailEdit->setPlaceholderText("Email address");
+        emailEdit->setMinimumHeight(38);
+        root->addWidget(nameEdit);
+        root->addWidget(emailEdit);
+
+        // ── Save button ───────────────────────────────────────────────────
+        QPushButton *saveBtn = new QPushButton("✓  Save Changes");
+        saveBtn->setStyleSheet(
+            "QPushButton { background:#14B8A6; color:white; border:none; border-radius:8px;"
+            " padding:11px; font-size:14px; font-weight:bold; }"
+            "QPushButton:hover { background:#0d9488; }");
+        saveBtn->setMinimumHeight(44);
+        connect(saveBtn, &QPushButton::clicked, dlg, [=]() {
+            if (instructorId > 0) {
+                QSqlQuery uq(QSqlDatabase::database());
+                uq.prepare("UPDATE instructors SET full_name=?, email=?, photo_path=? WHERE id=?");
+                uq.addBindValue(nameEdit->text().trimmed());
+                uq.addBindValue(emailEdit->text().trimmed());
+                uq.addBindValue(photoPathPtr->isEmpty() ? QVariant() : QVariant(*photoPathPtr));
+                uq.addBindValue(instructorId);
+                if (uq.exec()) {
+                    QMessageBox::information(dlg, "Saved", "Profile updated successfully.");
+                    dlg->accept();
+                    loadData();
+                } else {
+                    QMessageBox::warning(dlg, "Error", uq.lastError().text());
+                }
+            } else {
+                dlg->accept();
+            }
+        });
+        root->addWidget(saveBtn);
+        dlg->exec();
+    });
+    sideLayout->addWidget(settingsBtn);
 
     addSideDivider();
 
@@ -280,15 +461,16 @@ void InstructorDashboard::loadData()
     requestsLayout->setSpacing(15);
     requestsLayout->setContentsMargins(24, 24, 24, 24);
     
-    query.prepare("SELECT id, name, email, phone, birth_date, requested_date FROM students WHERE school_id = ?" + instrFilter + " AND status = 'pending' ORDER BY requested_date DESC");
+    query.prepare("SELECT id, name, email, phone, birth_date, requested_date, cin FROM students WHERE school_id = ?" + instrFilter + " AND status = 'pending' ORDER BY requested_date DESC");
     bindInstr(query);
-    
+
     if (query.exec()) {
         while (query.next()) {
             QWidget *card = new QWidget();
             setupStudentCard(card, query.value(0).toInt(), query.value(1).toString(),
                            query.value(2).toString(), query.value(3).toString(),
-                           query.value(4).toString(), query.value(5).toString());
+                           query.value(4).toString(), query.value(5).toString(),
+                           query.value(6).toString());
             requestsLayout->addWidget(card);
         }
     }
@@ -366,51 +548,98 @@ void InstructorDashboard::loadData()
 }
 
 void InstructorDashboard::setupStudentCard(QWidget *card, int studentId, const QString &name, const QString &email,
-                                           const QString &phone, const QString &birthDate, const QString &requestedDate)
+                                           const QString &phone, const QString &birthDate, const QString &requestedDate,
+                                           const QString &cin)
 {
     Q_UNUSED(birthDate);
     static int studCardCounter = 0;
     card->setObjectName(QString("studCard%1").arg(studCardCounter++));
     card->setStyleSheet("QWidget#" + card->objectName() + " { background-color: white; border-radius: 12px; border: 1px solid #E5E7EB; }");
-    card->setMinimumHeight(120);
+    card->setMinimumHeight(100);
 
-    QVBoxLayout *mainLayout = new QVBoxLayout(card);
-    mainLayout->setContentsMargins(20, 15, 20, 15);
-    mainLayout->setSpacing(10);
-    
+    QHBoxLayout *outerLayout = new QHBoxLayout(card);
+    outerLayout->setContentsMargins(20, 15, 20, 15);
+    outerLayout->setSpacing(16);
+
+    // ── Circular avatar: photo if available, else teal initial ────────────────
+    QLabel *avatar = new QLabel();
+    avatar->setFixedSize(54, 54);
+    avatar->setAlignment(Qt::AlignCenter);
+
+    bool photoLoaded = false;
+    if (!cin.isEmpty()) {
+        QString photosDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                            + "/student_photos";
+        for (const QString &ext : {"jpg","jpeg","png","bmp","webp"}) {
+            QString path = photosDir + "/" + cin + "." + ext;
+            if (QFile::exists(path)) {
+                QPixmap px(path);
+                if (!px.isNull()) {
+                    QPixmap circle(54, 54);
+                    circle.fill(Qt::transparent);
+                    QPainter painter(&circle);
+                    painter.setRenderHint(QPainter::Antialiasing);
+                    painter.setBrush(QBrush(px.scaled(54, 54, Qt::KeepAspectRatioByExpanding,
+                                                       Qt::SmoothTransformation)));
+                    painter.setPen(Qt::NoPen);
+                    painter.drawEllipse(0, 0, 54, 54);
+                    painter.end();
+                    avatar->setPixmap(circle);
+                    avatar->setStyleSheet("border-radius:27px; border:2px solid #14B8A6;");
+                    photoLoaded = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!photoLoaded) {
+        QString initial = name.isEmpty() ? QString("?") : QString(name.at(0).toUpper());
+        avatar->setText(initial);
+        avatar->setStyleSheet(
+            "background-color:#14B8A6; border-radius:27px; color:white;"
+            "font-size:20px; font-weight:bold;"
+            "min-width:54px; max-width:54px; min-height:54px; max-height:54px;");
+    }
+    outerLayout->addWidget(avatar);
+
+    // ── Right side: name + buttons, contact, date ─────────────────────────────
+    QVBoxLayout *mainLayout = new QVBoxLayout();
+    mainLayout->setSpacing(6);
+
     QHBoxLayout *topLayout = new QHBoxLayout();
     QLabel *nameLabel = new QLabel(name);
-    nameLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #1F1827;");
+    nameLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #1F1827;");
     topLayout->addWidget(nameLabel);
     topLayout->addStretch();
-    
+
     QPushButton *acceptBtn = new QPushButton("✓ Accept");
     acceptBtn->setStyleSheet("background-color: #10B981; color: white; border: none; border-radius: 5px; padding: 8px 15px; font-weight: bold;");
     connect(acceptBtn, &QPushButton::clicked, [this, studentId]() { onAcceptStudent(studentId); });
     topLayout->addWidget(acceptBtn);
-    
+
     QPushButton *rejectBtn = new QPushButton("✗ Reject");
     rejectBtn->setStyleSheet("background-color: #EF4444; color: white; border: none; border-radius: 5px; padding: 8px 15px; font-weight: bold;");
     connect(rejectBtn, &QPushButton::clicked, [this, studentId]() { onRejectStudent(studentId); });
     topLayout->addWidget(rejectBtn);
-    
+
     mainLayout->addLayout(topLayout);
-    
+
     QHBoxLayout *infoLayout = new QHBoxLayout();
     QLabel *emailLabel = new QLabel("📧 " + email);
     emailLabel->setStyleSheet("font-size: 13px; color: #6B7280;");
     infoLayout->addWidget(emailLabel);
-    
+
     QLabel *phoneLabel = new QLabel("📞 " + phone);
     phoneLabel->setStyleSheet("font-size: 13px; color: #6B7280;");
     infoLayout->addWidget(phoneLabel);
-    
     infoLayout->addStretch();
     mainLayout->addLayout(infoLayout);
-    
+
     QLabel *dateLabel = new QLabel("Requested on: " + requestedDate);
     dateLabel->setStyleSheet("font-size: 12px; color: #9CA3AF;");
     mainLayout->addWidget(dateLabel);
+
+    outerLayout->addLayout(mainLayout, 1);
 }
 
 void InstructorDashboard::setupApprovedStudentCard(QWidget *card, int studentId, const QString &name,
@@ -837,7 +1066,7 @@ void InstructorDashboard::switchTab(int index)
             });
             m_circuitDashboard->addExtraTab(
                 m_parcourTab,
-                QString::fromUtf8("\xf0\x9f\x8f\x81  Parcours"));
+                QString::fromUtf8("\xf0\x9f\x8f\x81  Course"));
 
             // Sync CircuitDashboard student selection → Parcours student ID
             connect(m_circuitDashboard, &CircuitDashboard::studentSelected,

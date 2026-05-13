@@ -787,3 +787,9 @@ git push origin master
 | 2026-05-05 | SensorManager error dedup: timestamp-based 3s cooldown (Qt fires multiple error codes for same OS error) | `sensormanager.cpp` |
 | 2026-05-05 | LCD status badge 🔴/🟢 added next to Connect Model button in Sensors card | `parkingwidget.cpp` |
 | 2026-05-05 | LCD RESET suppressed during active sessions to prevent timer wipe on COM6 reconnect | `parkingwidget.cpp` |
+| 2026-05-11 | Sessions crash fix: `calendarWidget`, `themeToggleBtn`, `examBtn`, `centralWidget` not initialized to nullptr — garbage pointer caused crash in updateCalendarHighlights() when WeatherService fired weatherDataReady. Fixed with `= nullptr` in header + null guard in onThemeChanged() | `wino_studentdashboard.h/.cpp` |
+| 2026-05-11 | Sessions accordion collapse on Theory/Parking switch | `studentlearninghub.cpp` |
+| 2026-05-11 | Dashboard page shows only stat cards + Learning Progress (no calendar) | `wino_studentdashboard.cpp` |
+| 2026-05-11 | Calendar moved to dedicated page (navigateToSection(3), lazy-loaded) | `wino_studentdashboard.cpp/.h` |
+| 2026-05-11 | Book Session embedded in-app (QDialog→QWidget, backRequested signal, lazy-loaded at index 4) | `bookingsession.h/.cpp`, `wino_studentdashboard.cpp/.h` |
+| 2026-05-11 | Removed teal footer bar from BookingSession; single inline Confirm Booking button | `bookingsession.cpp` |

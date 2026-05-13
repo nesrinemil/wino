@@ -99,25 +99,45 @@ MainWindow::MainWindow(QWidget *parent)
     ui = new Ui::MainWindow;
     ui->setupUi(this);
 
-    // ── WINO Logo on login screen ──
+    // ── WINO Logo on login screen (logo2.png) ──
     {
-        QPixmap logo(":/assets/wino_logo.png");
+        // Try logo2 first; fall back to original if missing
+        QPixmap logo(":/assets/logo2.png");
+        if (logo.isNull())
+            logo.load(":/assets/wino_logo.png");
         if (!logo.isNull()) {
-            ui->labelAppTitle->setPixmap(
-                logo.scaled(280, 280, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            ui->labelAppTitle->setAlignment(Qt::AlignHCenter | Qt::AlignBottom);
-            ui->labelAppTitle->setMinimumHeight(290);
-            ui->labelAppTitle->setMaximumHeight(290);
+            // Scale: portrait image 723×1024 → 240px wide
+            QPixmap scaled = logo.scaledToWidth(240, Qt::SmoothTransformation);
+
+            // Auto-crop transparent borders so logo sits flush above the card
+            QImage img = scaled.toImage().convertToFormat(QImage::Format_ARGB32);
+            int top = 0, bottom = img.height() - 1;
+            // Find first row with visible pixels (alpha > 10)
+            for (int y = 0; y < img.height() && top == 0; ++y)
+                for (int x = 0; x < img.width(); ++x)
+                    if (qAlpha(img.pixel(x, y)) > 10) { top = y; break; }
+            // Find last row with visible pixels
+            for (int y = img.height() - 1; y >= 0 && bottom == img.height()-1; --y)
+                for (int x = 0; x < img.width(); ++x)
+                    if (qAlpha(img.pixel(x, y)) > 10) { bottom = y; break; }
+            // Crop with small 6px padding around visible content
+            top    = qMax(0, top - 6);
+            bottom = qMin(img.height() - 1, bottom + 6);
+            QPixmap cropped = scaled.copy(0, top, scaled.width(), bottom - top + 1);
+
+            ui->labelAppTitle->setPixmap(cropped);
+            ui->labelAppTitle->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+            ui->labelAppTitle->setFixedHeight(cropped.height());
             ui->labelAppTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            // Small bottom margin so logo sits snug above the card
-            ui->labelAppTitle->setContentsMargins(0, 0, 0, 8);
+            ui->labelAppTitle->setContentsMargins(0, 0, 0, 0);
         }
     }
 
-    // ── Vertical placement: more space above logo, tighter below card ──
-    // Items in verticalLayout_6: 0=topSpacer, 1=logo, 2=logoToCardSpacer, 3=card
-    ui->verticalLayout_6->setStretch(0, 2);   // top spacer — pushes content slightly lower
-    ui->verticalLayout_6->addStretch(1);      // bottom spacer — less than top → card sits center-low
+    // ── Vertical placement: logo tight above card, whole block centered ──
+    // Layout items: 0=topSpacer, 1=logo, 2=logoToCardSpacer(0px), 3=card
+    ui->verticalLayout_6->setSpacing(8);      // small gap between logo and card
+    ui->verticalLayout_6->setStretch(0, 1);   // top spacer
+    ui->verticalLayout_6->addStretch(1);      // bottom spacer — equal → centered
 
     // Initialize network manager for API calls
     networkManager = new QNetworkAccessManager(this);
@@ -310,7 +330,6 @@ MainWindow::MainWindow(QWidget *parent)
         painter.end();
         ui->lblPhotoPreview->setPixmap(circle);
         ui->btnRemovePhoto->setVisible(true);
-        ui->chkPhoto->setChecked(true);
     };
 
     // ── Upload Photo ──────────────────────────────────────────────────────────
@@ -334,7 +353,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_studentPhotoPath.clear();
         ui->lblPhotoPreview->setPixmap(QPixmap());
         ui->btnRemovePhoto->setVisible(false);
-        ui->chkPhoto->setChecked(false);
     });
 
     // ── Style the preview label placeholder ──────────────────────────────────
@@ -422,29 +440,54 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->btnPrev2, &QPushButton::clicked, this, [this]() { goToStep(2); });
 
     // ── Registration Step 3 (index 4) ──
+    // Rename Next button to Complete Registration on step 3
+    ui->btnNext3->setText("\u2713  Complete Registration");
+
     connect(ui->btnNext3, &QPushButton::clicked, this, [this]() {
         // At least one course level must be selected
         if (!ui->rbRules->isChecked() && !ui->rbPractical->isChecked() &&
             !ui->rbParking->isChecked()) {
             showToast("\u26A0  Please select a Driving Course Level."); return;
         }
-        // CIN document checkbox
-        if (!ui->chkCIN->isChecked()) {
-            showToast("\u26A0  Please confirm you have your CIN (National ID Card).");
-            shakeWidget(ui->chkCIN); return;
-        }
-        // Photo checkbox
-        if (!ui->chkPhoto->isChecked()) {
-            showToast("\u26A0  Please confirm you have your face photo.");
-            shakeWidget(ui->chkPhoto); return;
-        }
-        // Theory exam required for Practical / Parking
+
+        // Theory/Circuit exam required for Practical / Parking
         if ((ui->rbPractical->isChecked() || ui->rbParking->isChecked()) &&
             !ui->chkTheoryExam->isChecked()) {
-            showToast("\u26A0  You must confirm you passed the theory exam (Code).");
+            QString msg = ui->rbParking->isChecked()
+                ? "\u26A0  You must confirm you passed the circuit exam."
+                : "\u26A0  You must confirm you passed the theory exam (Code).";
+            showToast(msg);
             shakeWidget(ui->chkTheoryExam); return;
         }
-        goToStep(5);
+
+        // Complete registration directly from step 3
+        QString errorMessage;
+        if (!insertStudentFromForm(&errorMessage)) {
+            showToast("Registration failed: " + errorMessage);
+            return;
+        }
+
+        QString firstName  = ui->editFirstName->text().trimmed();
+        QString lastName   = ui->editLastName->text().trimmed();
+        QString email      = ui->editEmail->text().trimmed();
+        QString fullName   = firstName + " " + lastName;
+
+        int newStudentId = 0;
+        {
+            QSqlQuery idQ;
+            idQ.prepare("SELECT id FROM STUDENTS WHERE LOWER(email)=LOWER(?) AND student_status='ACTIVE'");
+            idQ.addBindValue(email);
+            if (idQ.exec() && idQ.next())
+                newStudentId = idQ.value(0).toInt();
+        }
+
+        clearRegistrationForm();
+
+        StudentDashboard *w = new StudentDashboard();
+        w->setStudentId(newStudentId);
+        w->setStudentInfo(fullName, email, false);
+        w->showMaximized();
+        this->hide();
     });
     connect(ui->btnPrev3, &QPushButton::clicked, this, [this]() { goToStep(3); });
 
@@ -507,10 +550,16 @@ MainWindow::MainWindow(QWidget *parent)
         if (checked) ui->groupRequiredDocs->setVisible(false);
     });
     connect(ui->rbPractical, &QRadioButton::toggled, this, [this](bool checked) {
-        if (checked) ui->groupRequiredDocs->setVisible(true);
+        if (checked) {
+            ui->groupRequiredDocs->setVisible(true);
+            ui->chkTheoryExam->setText("I passed the theory exam (Code)");
+        }
     });
     connect(ui->rbParking, &QRadioButton::toggled, this, [this](bool checked) {
-        if (checked) ui->groupRequiredDocs->setVisible(true);
+        if (checked) {
+            ui->groupRequiredDocs->setVisible(true);
+            ui->chkTheoryExam->setText("I passed the circuit exam");
+        }
     });
 
     // ── Background car animation ──
@@ -543,9 +592,18 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 {
     const QString hash = hashPassword(password);
 
+    // ── Ensure Oracle connection is alive (may have gone idle after hub session) ──
+    {
+        QSqlDatabase db = QSqlDatabase::database();
+        if (!db.isOpen() || !db.isValid()) {
+            qDebug() << "[Login] DB not open/valid — reconnecting...";
+            Database::instance().connect();
+        }
+    }
+
     // 1. Check ADMIN table
     {
-        QSqlQuery q;
+        QSqlQuery q(QSqlDatabase::database());
         q.prepare("SELECT id, full_name FROM ADMIN "
                   "WHERE LOWER(email)=LOWER(?) AND password_hash=? AND status='active'");
         q.addBindValue(email.trimmed());
@@ -563,7 +621,7 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 
     // 2. Check INSTRUCTORS table (single source of truth for all instructors)
     {
-        QSqlQuery q;
+        QSqlQuery q(QSqlDatabase::database());
         q.prepare("SELECT id, full_name, school_id FROM INSTRUCTORS "
                   "WHERE LOWER(email)=LOWER(?) AND password_hash=?");
         q.addBindValue(email.trimmed());
@@ -585,7 +643,7 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
 
     // 3. Check STUDENTS table
     {
-        QSqlQuery q;
+        QSqlQuery q(QSqlDatabase::database());
         q.prepare("SELECT id, first_name, last_name, has_driving_license, status FROM STUDENTS "
                   "WHERE LOWER(email)=LOWER(?) AND password_hash=? AND student_status='ACTIVE'");
         q.addBindValue(email.trimmed());
@@ -601,7 +659,53 @@ bool MainWindow::tryLoginAllRoles(const QString &email, const QString &password)
             // ── APPROVED → open SmartDrive learning module (integrated) ──
             if (reqStatus == "approved") {
                 StudentLearningHub *hub = new StudentLearningHub(id);
-                hub->setAttribute(Qt::WA_DeleteOnClose);
+                // Do NOT use WA_DeleteOnClose — we manage lifetime in logoutRequested
+                connect(hub, &StudentLearningHub::logoutRequested, this, [this, hub]() {
+                    // ── LOGOUT SEQUENCE ──────────────────────────────────────
+                    // We are INSIDE the logoutRequested signal dispatch stack.
+                    // Doing ANY heavy work here (qApp->setStyleSheet, deleting
+                    // the hub) can crash because Qt's event machinery is still
+                    // holding references to hub's internals.
+                    //
+                    // Fix: do nothing heavy right now.  Queue ALL real work to
+                    // the next event-loop iteration via QueuedConnection so the
+                    // signal stack is fully unwound before we touch anything.
+
+                    // Disconnect ThemeManager immediately so no new applyTheme()
+                    // can fire while we are mid-logout.
+                    disconnect(ThemeManager::instance(), nullptr, hub, nullptr);
+
+                    // Defer every other action to the next event-loop pass.
+                    QMetaObject::invokeMethod(this, [this, hub]() {
+
+                        // 1. Hide the hub NOW (signal stack is gone).
+                        hub->hide();
+
+                        // 2. Reset login form and clear stale toasts.
+                        if (ui->editSignPassword) ui->editSignPassword->clear();
+                        if (ui->editSignEmail)    ui->editSignEmail->setStyleSheet("");
+                        if (ui->editSignPassword) ui->editSignPassword->setStyleSheet("");
+                        if (ui->stackedWidget)    ui->stackedWidget->setCurrentIndex(0);
+                        for (QLabel *lbl : this->findChildren<QLabel*>()) {
+                            if (lbl->property("isToast").toBool())
+                                lbl->deleteLater();
+                        }
+
+                        // 3. Show login.
+                        this->showMaximized();
+
+                        // 4. Clear the global dark stylesheet.  Hub is hidden so
+                        //    its widgets absorb the StyleChange event harmlessly.
+                        qApp->setStyleSheet("");
+                        this->update();
+                        this->repaint();
+
+                        // 5. Schedule hub deletion in a separate pass so that
+                        //    all pending events for the hub are processed first.
+                        QTimer::singleShot(500, hub, &QObject::deleteLater);
+
+                    }, Qt::QueuedConnection);
+                });
                 hub->showMaximized();
                 this->hide();
                 return true;
@@ -707,8 +811,8 @@ bool MainWindow::insertStudentFromForm(QString *errorMessage)
     q.addBindValue(cin);
     q.addBindValue(email);
     q.addBindValue(hashPassword(password));
-    q.addBindValue(ui->chkCIN->isChecked()   ? 1 : 0);
-    q.addBindValue(ui->chkPhoto->isChecked() ? 1 : 0);
+    q.addBindValue(1);   // has_cin  (removed from UI, default true)
+    q.addBindValue(1);   // has_photo (removed from UI, default true)
     q.addBindValue(isBeginner        ? 1 : 0);
     q.addBindValue(hasDrivingLicense ? 1 : 0);
     q.addBindValue(hasCode           ? 1 : 0);
@@ -751,9 +855,6 @@ void MainWindow::clearRegistrationForm()
     ui->editEmail->clear();
     ui->editPassword->clear();
     ui->editConfirm->clear();
-
-    ui->chkCIN->setChecked(false);
-    ui->chkPhoto->setChecked(false);
 
     // Reset photo
     m_studentPhotoPath.clear();

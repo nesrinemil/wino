@@ -5,9 +5,6 @@
   <property name="geometry"><rect><x>0</x><y>0</y><width>1200</width><height>800</height></rect></property>
   <property name="windowTitle"><string>Instructor Dashboard</string></property>
   <property name="styleSheet"><string>QMainWindow { background-color: #F1F5F9; }
-#headerWidget { background-color: #14B8A6; }
-#headerTitle { color: white; font-size: 18px; font-weight: bold; }
-#logoutButton { background-color: transparent; color: white; border: 2px solid white; border-radius: 5px; padding: 8px 20px; font-weight: bold; }
 QTabWidget::pane { border: none; background-color: transparent; }</string></property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -16,18 +13,6 @@ QTabWidget::pane { border: none; background-color: transparent; }</string></prop
     <property name="topMargin"><number>0</number></property>
     <property name="rightMargin"><number>0</number></property>
     <property name="bottomMargin"><number>0</number></property>
-    <item>
-     <widget class="QWidget" name="headerWidget" native="true">
-      <property name="minimumSize"><size><width>0</width><height>70</height></size></property>
-      <property name="maximumSize"><size><width>16777215</width><height>70</height></size></property>
-      <layout class="QHBoxLayout" name="horizontalLayout">
-       <item><widget class="QLabel" name="headerTitle"><property name="text"><string>Wino - Module 2</string></property></widget></item>
-       <item><widget class="QLabel" name="headerSubtitle"><property name="text"><string>Instructor Space</string></property><property name="styleSheet"><string>color: white; font-size: 13px;</string></property></widget></item>
-       <item><spacer name="horizontalSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
-       <item><widget class="QPushButton" name="logoutButton"><property name="text"><string>Logout</string></property></widget></item>
-      </layout>
-     </widget>
-    </item>
     <item>
      <widget class="QWidget" name="contentWidget" native="true">
       <property name="styleSheet"><string>background-color: #F1F5F9;</string></property>

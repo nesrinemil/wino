@@ -1,7 +1,7 @@
 #ifndef BOOKINGSESSION_H
 #define BOOKINGSESSION_H
 
-#include <QDialog>
+#include <QWidget>
 #include <QComboBox>
 #include <QDateEdit>
 #include <QTimeEdit>
@@ -14,7 +14,7 @@
 
 
 
-class BookingSession : public QDialog
+class BookingSession : public QWidget
 {
     Q_OBJECT
 
@@ -24,6 +24,7 @@ public:
 
 signals:
     void sessionBooked();
+    void backRequested();   // emitted on Cancel / after successful booking
 
 private slots:
     void onProceedToPayment();

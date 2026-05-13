@@ -15,6 +15,10 @@
 #include <QIcon>
 #include <QTimer>
 #include <QGraphicsDropShadowEffect>
+#include <QPainter>
+#include <QPainterPath>
+#include <QFile>
+#include <QPixmap>
 
 StudentDashboard::StudentDashboard(QWidget *parent) :
     QMainWindow(parent),
@@ -190,7 +194,8 @@ void StudentDashboard::loadSchoolsFiltered(const QString &search)
     QString queryStr =
         "SELECT ds.id, ds.name, ds.students_count, ds.vehicles_count, ds.rating, "
         "  SUM(CASE WHEN UPPER(v.transmission) = 'MANUAL'    THEN 1 ELSE 0 END) AS manual_cnt, "
-        "  SUM(CASE WHEN UPPER(v.transmission) = 'AUTOMATIC' THEN 1 ELSE 0 END) AS auto_cnt "
+        "  SUM(CASE WHEN UPPER(v.transmission) = 'AUTOMATIC' THEN 1 ELSE 0 END) AS auto_cnt, "
+        "  MAX(ds.logo_path) AS logo_path "
         "FROM driving_schools ds "
         "LEFT JOIN cars v ON v.driving_school_id = ds.id "
         "WHERE ds.status = 'active' ";
@@ -219,9 +224,10 @@ void StudentDashboard::loadSchoolsFiltered(const QString &search)
         double rating   = query.value(4).toDouble();
         int manualCnt   = query.value(5).toInt();
         int autoCnt     = query.value(6).toInt();
+        QString logoPath = query.value(7).toString();
 
         QWidget *card = new QWidget();
-        setupSchoolCard(card, id, name, students, vehicles, rating, manualCnt, autoCnt);
+        setupSchoolCard(card, id, name, students, vehicles, rating, manualCnt, autoCnt, logoPath);
         mainLayout->addWidget(card);
     }
 
@@ -237,7 +243,8 @@ void StudentDashboard::loadSchoolsFiltered(const QString &search)
 
 void StudentDashboard::setupSchoolCard(QWidget *card, int schoolId, const QString &name,
                                         int students, int vehicles, double rating,
-                                        int manualCount, int autoCount)
+                                        int manualCount, int autoCount,
+                                        const QString &logoPath)
 {
     // Determine if this school is AI-recommended
     bool isRecommended = m_isNewDriver ? (manualCount >= autoCount) : (autoCount >= manualCount);
@@ -257,7 +264,49 @@ void StudentDashboard::setupSchoolCard(QWidget *card, int schoolId, const QStrin
 
     QHBoxLayout *cardLayout = new QHBoxLayout(card);
     cardLayout->setContentsMargins(20, 15, 20, 15);
-    cardLayout->setSpacing(20);
+    cardLayout->setSpacing(16);
+
+    // ── School logo (read-only circular avatar) ───────────────────────────────
+    const int LOGO_SIZE = 54;
+    QLabel *logoLabel = new QLabel(card);
+    logoLabel->setFixedSize(LOGO_SIZE, LOGO_SIZE);
+    {
+        QPixmap pix;
+        bool loaded = !logoPath.isEmpty() && QFile::exists(logoPath) && pix.load(logoPath);
+        if (loaded) {
+            // Circular crop
+            QPixmap scaled = pix.scaled(LOGO_SIZE, LOGO_SIZE,
+                Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            QPixmap result(LOGO_SIZE, LOGO_SIZE);
+            result.fill(Qt::transparent);
+            QPainter painter(&result);
+            painter.setRenderHint(QPainter::Antialiasing);
+            QPainterPath path;
+            path.addEllipse(0, 0, LOGO_SIZE, LOGO_SIZE);
+            painter.setClipPath(path);
+            int xOff = (scaled.width()  - LOGO_SIZE) / 2;
+            int yOff = (scaled.height() - LOGO_SIZE) / 2;
+            painter.drawPixmap(-xOff, -yOff, scaled);
+            logoLabel->setPixmap(result);
+            logoLabel->setStyleSheet("border-radius:27px;border:2px solid #14B8A6;");
+        } else {
+            // Initials placeholder
+            QPixmap ph(LOGO_SIZE, LOGO_SIZE);
+            ph.fill(Qt::transparent);
+            QPainter pp(&ph);
+            pp.setRenderHint(QPainter::Antialiasing);
+            pp.setBrush(QColor("#e0f2f1"));
+            pp.setPen(QPen(QColor("#14B8A6"), 2));
+            pp.drawEllipse(1, 1, LOGO_SIZE-2, LOGO_SIZE-2);
+            pp.setPen(QColor("#0d9488"));
+            QFont f = pp.font(); f.setPointSize(16); f.setBold(true); pp.setFont(f);
+            pp.drawText(QRect(0, 0, LOGO_SIZE, LOGO_SIZE), Qt::AlignCenter,
+                        name.isEmpty() ? QString("?") : QString(name[0]).toUpper());
+            logoLabel->setPixmap(ph);
+            logoLabel->setStyleSheet("border-radius:27px;border:2px dashed #14B8A6;");
+        }
+    }
+    cardLayout->addWidget(logoLabel);
 
     QVBoxLayout *infoLayout = new QVBoxLayout();
     infoLayout->setSpacing(6);
@@ -272,7 +321,7 @@ void StudentDashboard::setupSchoolCard(QWidget *card, int schoolId, const QStrin
 
     // AI Recommended badge
     if (isRecommended) {
-        QLabel *badge = new QLabel(m_isNewDriver ? "🤖 Manuel Recommandé" : "🤖 Automatique Recommandé");
+        QLabel *badge = new QLabel(m_isNewDriver ? "🤖 Manual Recommended" : "🤖 Automatic Recommended");
         badge->setStyleSheet(
             m_isNewDriver
             ? "background:#DCFCE7;color:#15803D;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700;"
@@ -372,7 +421,7 @@ void StudentDashboard::onSearchChanged(const QString &text)
 
 void StudentDashboard::onViewDetailsClicked(int schoolId)
 {
-    QSqlQuery query;
+    QSqlQuery query(QSqlDatabase::database());
     query.prepare("SELECT name, rating FROM driving_schools WHERE id = ?");
     query.addBindValue(schoolId);
     if (!query.exec() || !query.next()) return;
@@ -469,26 +518,27 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
     vTitle->setStyleSheet("font-size:15px;font-weight:bold;color:#1F1827;");
     root->addWidget(vTitle);
 
-    QScrollArea *vScroll = new QScrollArea();
-    vScroll->setWidgetResizable(true);
-    vScroll->setMaximumHeight(220);
-    QWidget *vContents = new QWidget();
-    vContents->setObjectName("scrollContents");
-    QVBoxLayout *vLayout = new QVBoxLayout(vContents);
+    QFrame *vCard = new QFrame();
+    vCard->setStyleSheet("QFrame{background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:12px;}");
+    QVBoxLayout *vLayout = new QVBoxLayout(vCard);
     vLayout->setSpacing(8);
-    vLayout->setContentsMargins(0, 0, 4, 0);
+    vLayout->setContentsMargins(12, 10, 12, 10);
 
-    struct VehicleRow { QString brand, model, plate, trans, vstatus; int year; };
+    struct VehicleRow { QString brand, model, plate, trans, vstatus, imagePath; int year; };
     QList<VehicleRow> allVehicles;
     {
-        QSqlQuery vq;
-        vq.prepare("SELECT brand, model, year, plate_number, transmission, status "
+        QSqlQuery vq(QSqlDatabase::database());
+        // Note: CARS table uses is_active (1/0), not a status VARCHAR column
+        vq.prepare("SELECT brand, model, year, plate_number, transmission, "
+                   "CASE WHEN is_active=1 THEN 'active' ELSE 'inactive' END, "
+                   "image_path "
                    "FROM cars WHERE driving_school_id = ? ORDER BY id");
         vq.addBindValue(schoolId); vq.exec();
         while (vq.next()) {
             allVehicles.append({ vq.value(0).toString(), vq.value(1).toString(),
                                  vq.value(3).toString(), vq.value(4).toString(),
-                                 vq.value(5).toString(), vq.value(2).toInt() });
+                                 vq.value(5).toString(), vq.value(6).toString(),
+                                 vq.value(2).toInt() });
         }
     }
 
@@ -508,15 +558,29 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
     for (auto &vr : sortedVehicles) {
         bool isRec = vr.trans.compare(recommendedTrans, Qt::CaseInsensitive) == 0;
         QWidget *vCard = new QWidget();
-        vCard->setStyleSheet(isRec
-            ? "QWidget{background:#F0FDFA;border:2px solid #14B8A6;border-radius:10px;}"
-            : "QWidget{background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;}");
+        vCard->setStyleSheet("QWidget{background:transparent;border:none;}");
         QHBoxLayout *vRow = new QHBoxLayout(vCard);
         vRow->setContentsMargins(12, 10, 12, 10); vRow->setSpacing(12);
-        QLabel *carIcon = new QLabel(vr.trans.compare("Automatic", Qt::CaseInsensitive) == 0 ? "🤖" : "⚙️");
-        carIcon->setFixedSize(48, 48); carIcon->setAlignment(Qt::AlignCenter);
-        carIcon->setStyleSheet(isRec ? "background:#CCFBF1;border-radius:8px;font-size:26px;"
-                                     : "background:#E5E7EB;border-radius:8px;font-size:26px;");
+        QLabel *carIcon = new QLabel();
+        carIcon->setFixedSize(64, 48);
+        carIcon->setAlignment(Qt::AlignCenter);
+        {
+            QPixmap cpix;
+            bool imgLoaded = !vr.imagePath.isEmpty()
+                             && QFile::exists(vr.imagePath)
+                             && cpix.load(vr.imagePath);
+            if (imgLoaded) {
+                carIcon->setPixmap(cpix.scaled(64, 48, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation));
+                carIcon->setStyleSheet("border-radius:8px;border:1px solid #E5E7EB;");
+            } else {
+                carIcon->setText(vr.trans.compare("Automatic", Qt::CaseInsensitive) == 0
+                                 ? "🤖" : "🚗");
+                carIcon->setStyleSheet(isRec
+                    ? "background:#CCFBF1;border-radius:8px;font-size:26px;"
+                    : "background:#E5E7EB;border-radius:8px;font-size:26px;");
+            }
+        }
         vRow->addWidget(carIcon);
         QVBoxLayout *vInfo = new QVBoxLayout(); vInfo->setSpacing(3);
         QHBoxLayout *nameRow = new QHBoxLayout(); nameRow->setSpacing(8);
@@ -543,24 +607,23 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
         vRow->addWidget(vsBadge);
         vLayout->addWidget(vCard);
     }
-    vLayout->addStretch();
-    vScroll->setWidget(vContents);
-    root->addWidget(vScroll);
+    root->addWidget(vCard);
 
     root->addWidget(makeSep());
 
     // ── INSTRUCTORS ───────────────────────────────────────────────────────
     // Both count and list queries use the same filter (role != 'admin')
-    struct InstrRow { int id; QString name; bool avail; };
+    struct InstrRow { int id; QString name; QString photoPath; bool avail; };
     QList<InstrRow> instrRows;
     {
         // Instructors stored in INSTRUCTORS table
-        QSqlQuery lq;
-        lq.prepare("SELECT id, full_name FROM instructors "
+        QSqlQuery lq(QSqlDatabase::database());
+        lq.prepare("SELECT id, full_name, photo_path FROM instructors "
                    "WHERE school_id = ? ORDER BY full_name");
         lq.addBindValue(schoolId); lq.exec();
         while (lq.next())
-            instrRows.append({ lq.value(0).toInt(), lq.value(1).toString(), true /*always available*/ });
+            instrRows.append({ lq.value(0).toInt(), lq.value(1).toString(),
+                               lq.value(2).toString(), true /*always available*/ });
     }
     int instrTotal = instrRows.size();
     int instrAvail = 0;
@@ -571,23 +634,20 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
     iTitle->setStyleSheet("font-size:15px;font-weight:bold;color:#1F1827;");
     root->addWidget(iTitle);
 
-    QScrollArea *iScroll = new QScrollArea();
-    iScroll->setWidgetResizable(true);
-    iScroll->setMaximumHeight(220);
-    QWidget *iContents = new QWidget();
-    iContents->setObjectName("scrollContents");
-    QVBoxLayout *iLayout = new QVBoxLayout(iContents);
+    QFrame *iCard = new QFrame();
+    iCard->setStyleSheet("QFrame{background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:12px;}");
+    QVBoxLayout *iLayout = new QVBoxLayout(iCard);
     iLayout->setSpacing(10);
-    iLayout->setContentsMargins(0, 0, 4, 0);
+    iLayout->setContentsMargins(12, 10, 12, 10);
 
     auto *selectedInstructorId   = new int(0);
     auto *selectedInstructorCard = new QWidget*(nullptr);
 
     auto normalCardStyle = [](QWidget *c) {
-        c->setStyleSheet("QWidget{background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:10px;}");
+        c->setStyleSheet("QWidget{background:transparent;border:none;}");
     };
     auto selectedCardStyle = [](QWidget *c) {
-        c->setStyleSheet("QWidget{background:#F0FDFA;border:2px solid #14B8A6;border-radius:10px;}");
+        c->setStyleSheet("QWidget{background:transparent;border:none;}");
     };
 
     // Auto-select if only one instructor
@@ -634,12 +694,29 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
             iRow->setContentsMargins(14, 10, 14, 10);
             iRow->setSpacing(12);
 
-            // Avatar circle with initial
-            QLabel *avatar = new QLabel(row.name.isEmpty() ? "?" : QString(row.name[0].toUpper()));
-            avatar->setFixedSize(42, 42);
+            // Avatar: show photo if available, else teal initial
+            QLabel *avatar = new QLabel();
+            avatar->setFixedSize(46, 46);
             avatar->setAlignment(Qt::AlignCenter);
-            avatar->setStyleSheet("background:#14B8A6;color:white;border-radius:21px;"
-                                  "font-size:17px;font-weight:bold;");
+            {
+                QPixmap src;
+                if (!row.photoPath.isEmpty() && QFile::exists(row.photoPath) && src.load(row.photoPath)) {
+                    // Circular crop
+                    QPixmap scaled = src.scaled(46, 46, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+                    QPixmap result(46, 46); result.fill(Qt::transparent);
+                    QPainter pp(&result); pp.setRenderHint(QPainter::Antialiasing);
+                    QPainterPath path; path.addEllipse(0, 0, 46, 46);
+                    pp.setClipPath(path);
+                    int xOff = (scaled.width()-46)/2, yOff = (scaled.height()-46)/2;
+                    pp.drawPixmap(-xOff, -yOff, scaled);
+                    avatar->setPixmap(result);
+                    avatar->setStyleSheet("border-radius:23px; border:2px solid #14B8A6;");
+                } else {
+                    avatar->setText(row.name.isEmpty() ? "?" : QString(row.name[0].toUpper()));
+                    avatar->setStyleSheet("background:#14B8A6;color:white;border-radius:23px;"
+                                         "font-size:17px;font-weight:bold;");
+                }
+            }
             iRow->addWidget(avatar);
 
             // Name + role
@@ -691,9 +768,7 @@ void StudentDashboard::onViewDetailsClicked(int schoolId)
         }
     }
 
-    iLayout->addStretch();
-    iScroll->setWidget(iContents);
-    root->addWidget(iScroll);
+    root->addWidget(iCard);
 
     // ── Register button ───────────────────────────────────────────────────
     QPushButton *registerBtn = new QPushButton("\U0001F4E7  Send Registration Request");

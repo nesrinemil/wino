@@ -1756,7 +1756,6 @@ void ParkingWidget::setupUI()
     QVBoxLayout *mainL = new QVBoxLayout(this);
     mainL->setContentsMargins(0,0,0,0);
     mainL->setSpacing(0);
-    mainL->addWidget(createBanner());
 
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(createVehicleSelectionPage()); // 0 — Vehicle selection (kept for fallback)
@@ -1765,6 +1764,9 @@ void ParkingWidget::setupUI()
     m_stack->addWidget(createReservationPage());       // 3 — Booking examen
     m_stack->addWidget(createAnalyticsPage());         // 4 — Analytics & Smart Coach
     m_stack->addWidget(createAssistantPage());         // 5 — AI Assistant
+    m_stack->addWidget(createVideosPage());            // 6 — Video Tutorials
+    m_stack->addWidget(createHistoriquePage());        // 7 — Historique full page
+    m_stack->addWidget(createBadgesPage());            // 8 — Badges
     mainL->addWidget(m_stack, 1);
 
     // Auto-select the student's circuit vehicle and go directly to maneuver picker
@@ -2284,39 +2286,6 @@ QWidget* ParkingWidget::createHomePage()
     //  WEATHER CONDITIONS
     // ══════════════════════════════════════════
     cL->addWidget(createWeatherCard());
-
-    // ══════════════════════════════════════════
-    //  VIDEO TUTORIALS ROW
-    // ══════════════════════════════════════════
-    QLabel *vidTitle = new QLabel(QString::fromUtf8(
-        "\xf0\x9f\x8e\xac  Video Tutorials — Learn from real ATTT exams"), this);
-    vidTitle->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;"
-        "background:transparent;border:none;}");
-    cL->addWidget(vidTitle);
-
-    for (int i = 0; i < 5; i++) {
-        cL->addWidget(createVideoTutorialCard(i));
-    }
-
-    // ══════════════════════════════════════════
-    //  PERFORMANCE TREND
-    // ══════════════════════════════════════════
-    cL->addWidget(createPerformanceTrendCard());
-
-    // ══════════════════════════════════════════
-    //  EXAM READINESS + HISTORY + BADGES
-    // ══════════════════════════════════════════
-    cL->addWidget(createExamReadinessCard());
-
-    QHBoxLayout *bottomRow = new QHBoxLayout();
-    bottomRow->setSpacing(14);
-    bottomRow->addWidget(createRadarChart(), 1);
-    QVBoxLayout *rightBottomCol = new QVBoxLayout();
-    rightBottomCol->setSpacing(14);
-    rightBottomCol->addWidget(createAchievementsStrip());
-    rightBottomCol->addWidget(createHistoryCard());
-    bottomRow->addLayout(rightBottomCol, 1);
-    cL->addLayout(bottomRow);
 
     cL->addStretch();
     scroll->setWidget(content);
@@ -5180,9 +5149,9 @@ void ParkingWidget::updateDashboard()
     QStringList lvlIcons = {QString::fromUtf8("\xf0\x9f\x8c\xb1"), QString::fromUtf8("\xf0\x9f\x8c\xbf"),
         QString::fromUtf8("\xf0\x9f\x8c\xb3"), QString::fromUtf8("\xe2\xad\x90"), QString::fromUtf8("\xf0\x9f\x91\x91")};
     int li = qMax(0, qMin(m_currentLevel - 1, 4));
-    m_dashLevel->setText(QString("%1 Lv. %2 — %3").arg(lvlIcons[li]).arg(m_currentLevel).arg(lvlNames[li]));
-    m_dashXPBar->setValue(m_totalXP % 100);
-    m_dashXPLabel->setText(QString("%1 XP").arg(m_totalXP % 100));
+    if (m_dashLevel)  m_dashLevel->setText(QString("%1 Lv. %2 — %3").arg(lvlIcons[li]).arg(m_currentLevel).arg(lvlNames[li]));
+    if (m_dashXPBar)  m_dashXPBar->setValue(m_totalXP % 100);
+    if (m_dashXPLabel) m_dashXPLabel->setText(QString("%1 XP").arg(m_totalXP % 100));
     m_statSessions->setText(QString::number(m_totalSessionsCount));
     int rate = m_totalSessionsCount > 0 ? (m_totalSuccessCount * 100 / m_totalSessionsCount) : 0;
     m_statSuccess->setText(QString("%1%").arg(rate));
@@ -8517,9 +8486,12 @@ void ParkingWidget::sendToLcd(const QString &cmd)
         }
         return;
     }
-    m_lcdPort->write((cmd + "\n").toUtf8());
-    m_lcdPort->flush();
-    qDebug() << "[LCD] Sent:" << cmd;
+    QByteArray data = (cmd + "\n").toUtf8();
+    qint64 written = m_lcdPort->write(data);
+    // waitForBytesWritten is required on Windows USB serial (flush() does NOT guarantee TX)
+    if (written > 0)
+        m_lcdPort->waitForBytesWritten(200);
+    qDebug() << "[LCD] Sent:" << cmd << "(wrote" << written << "bytes)";
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -8540,14 +8512,17 @@ void ParkingWidget::onLcdDataReady()
 
         qDebug() << "[LCD-RX]" << line;
 
-        // LCD Arduino only RECEIVES commands (T:, S:, RESET...) — it never sends back.
-        // Any incoming line = RFID card scanned. Use 3 s cooldown to avoid double-trigger.
+        // Only react to CARD: lines — ignore GATE1:OPEN, GATE2:CLOSED, IR:BLOCKED etc.
+        if (!line.startsWith("CARD:"))
+            continue;
+
+        // 3-second cooldown to avoid double-trigger from same card scan
         static QElapsedTimer rfidCooldown;
         if (rfidCooldown.isValid() && rfidCooldown.elapsed() < 3000)
             continue;
         rfidCooldown.restart();
 
-        qDebug() << "[RFID] Card scanned";
+        qDebug() << "[RFID] Card scanned:" << line;
 
         if (!m_sessionActive) {
             // ── Start session ──
@@ -8586,4 +8561,600 @@ void ParkingWidget::onLcdDataReady()
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SIDEBAR NAVIGATION — navigateParkingSection
+// ═══════════════════════════════════════════════════════════════════
+void ParkingWidget::navigateParkingSection(int section)
+{
+    switch (section) {
+    case 0: // Dashboard — go to training home page
+        m_stack->setCurrentIndex(1);
+        break;
+    case 1: // Videos
+        m_stack->setCurrentIndex(6);
+        break;
+    case 2: // Historique
+        refreshHistoryUI();
+        refreshTrendWidget();
+        m_stack->setCurrentIndex(7);
+        break;
+    case 3: // Badges
+        refreshBadges();
+        m_stack->setCurrentIndex(8);
+        break;
+    default:
+        m_stack->setCurrentIndex(1);
+        break;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PAGE 6 — VIDEO TUTORIALS (full page)
+// ═══════════════════════════════════════════════════════════════════
+QWidget* ParkingWidget::createVideosPage()
+{
+    QWidget *page = new QWidget(this);
+    page->setObjectName("videosPage");
+    page->setStyleSheet(QString("QWidget#videosPage{%1}").arg(BG));
+
+    QVBoxLayout *pL = new QVBoxLayout(page);
+    pL->setContentsMargins(0,0,0,0);
+    pL->setSpacing(0);
+
+    // ── Top bar ──────────────────────────────────────────────────────
+    QWidget *topBar = new QWidget(page);
+    topBar->setFixedHeight(52);
+    topBar->setStyleSheet("background:white;border-bottom:2px solid #00b894;");
+    QHBoxLayout *tbL = new QHBoxLayout(topBar);
+    tbL->setContentsMargins(16,0,16,0);
+    tbL->setSpacing(10);
+
+    QPushButton *back = new QPushButton(QString::fromUtf8("\xe2\x86\x90"), topBar);
+    back->setFixedSize(32,32);
+    back->setCursor(Qt::PointingHandCursor);
+    back->setStyleSheet("QPushButton{background:#f0f2f5;color:#2d3436;border:none;"
+        "border-radius:16px;font-size:14px;font-weight:bold;}"
+        "QPushButton:hover{background:#e2e8f0;}");
+    connect(back, &QPushButton::clicked, this, [this]{ navigateParkingSection(0); });
+    tbL->addWidget(back);
+
+    QLabel *title = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x8e\xac  Tutoriels Vid\xc3\xa9o"), topBar);
+    title->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;}");
+    tbL->addWidget(title);
+    tbL->addStretch();
+    pL->addWidget(topBar);
+
+    // ── Scroll area ──────────────────────────────────────────────────
+    QScrollArea *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea{border:none;background:#f0f2f5;}"
+        "QScrollBar:vertical{width:6px;background:transparent;}"
+        "QScrollBar::handle:vertical{background:#d0d5db;border-radius:3px;min-height:30px;}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}");
+
+    QWidget *contentW = new QWidget();
+    contentW->setStyleSheet("background:#f0f2f5;");
+    QVBoxLayout *cL = new QVBoxLayout(contentW);
+    cL->setContentsMargins(24,20,24,24);
+    cL->setSpacing(14);
+
+    QLabel *hdr = new QLabel(QString::fromUtf8(
+        "\xf0\x9f\x93\xba  Vid\xc3\xa9os ATTT \xe2\x80\x94 Ma\xc3\xaetrisez chaque man\xc5\x93uvre"),
+        contentW);
+    hdr->setStyleSheet("QLabel{font-size:15px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;padding-bottom:4px;}");
+    cL->addWidget(hdr);
+
+    QLabel *sub2 = new QLabel(QString::fromUtf8(
+        "D\xc3\xa9monstrations r\xc3\xa9elles de l'examen ATTT sur YouTube"), contentW);
+    sub2->setStyleSheet("QLabel{font-size:12px;color:#636e72;"
+        "background:transparent;border:none;padding-bottom:8px;}");
+    cL->addWidget(sub2);
+
+    for (int i = 0; i < 5; i++) {
+        QFrame *card = new QFrame(contentW);
+        QString cid = QString("vidFull%1").arg(i);
+        card->setObjectName(cid);
+        card->setStyleSheet(QString(
+            "QFrame#%1{background:white;border-radius:14px;"
+            "border:1px solid #e2e8f0;}").arg(cid));
+        auto *sh = new QGraphicsDropShadowEffect(card);
+        sh->setBlurRadius(16); sh->setColor(QColor(0,0,0,15)); sh->setOffset(0,4);
+        card->setGraphicsEffect(sh);
+
+        QHBoxLayout *cl2 = new QHBoxLayout(card);
+        cl2->setContentsMargins(18,16,18,16);
+        cl2->setSpacing(16);
+
+        QLabel *ic = new QLabel(QString::fromUtf8("\xf0\x9f\x8e\xac"), card);
+        ic->setFixedSize(52,52);
+        ic->setAlignment(Qt::AlignCenter);
+        ic->setStyleSheet(QString(
+            "QLabel{font-size:22px;background:%1;border-radius:26px;border:none;}")
+            .arg(m_maneuverColors.value(i,"#00b894")));
+        cl2->addWidget(ic);
+
+        QVBoxLayout *tL = new QVBoxLayout();
+        tL->setSpacing(4);
+        QLabel *nm = new QLabel(m_maneuverNames.value(i,"Manoeuvre"), card);
+        nm->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;"
+            "background:transparent;border:none;}");
+        tL->addWidget(nm);
+        QLabel *ds = new QLabel(QString::fromUtf8(
+            "D\xc3\xa9monstration compl\xc3\xa8te \xe2\x80\x94 examen ATTT"), card);
+        ds->setStyleSheet("QLabel{font-size:11px;color:#636e72;"
+            "background:transparent;border:none;}");
+        tL->addWidget(ds);
+        cl2->addLayout(tL, 1);
+
+        QPushButton *btn = new QPushButton(
+            QString::fromUtf8("\xe2\x96\xb6  Regarder"), card);
+        btn->setFixedSize(110,36);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(
+            "QPushButton{background:#ff0000;color:white;border:none;border-radius:10px;"
+            "font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{background:#cc0000;}");
+        QString url = m_videoUrls.value(i,"");
+        connect(btn, &QPushButton::clicked, this, [url]{
+            QDesktopServices::openUrl(QUrl(url));
+        });
+        cl2->addWidget(btn);
+        cL->addWidget(card);
+    }
+    cL->addStretch();
+    scroll->setWidget(contentW);
+    pL->addWidget(scroll, 1);
+    return page;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PAGE 7 — HISTORIQUE FULL PAGE
+// ═══════════════════════════════════════════════════════════════════
+QWidget* ParkingWidget::createHistoriquePage()
+{
+    QWidget *page = new QWidget(this);
+    page->setObjectName("histPage");
+    page->setStyleSheet(QString("QWidget#histPage{%1}").arg(BG));
+
+    QVBoxLayout *pL = new QVBoxLayout(page);
+    pL->setContentsMargins(0,0,0,0);
+    pL->setSpacing(0);
+
+    // ── Top bar ──────────────────────────────────────────────────────
+    QWidget *topBar = new QWidget(page);
+    topBar->setFixedHeight(52);
+    topBar->setStyleSheet("background:white;border-bottom:2px solid #00b894;");
+    QHBoxLayout *tbL = new QHBoxLayout(topBar);
+    tbL->setContentsMargins(16,0,16,0);
+    tbL->setSpacing(10);
+
+    QPushButton *back = new QPushButton(QString::fromUtf8("\xe2\x86\x90"), topBar);
+    back->setFixedSize(32,32);
+    back->setCursor(Qt::PointingHandCursor);
+    back->setStyleSheet("QPushButton{background:#f0f2f5;color:#2d3436;border:none;"
+        "border-radius:16px;font-size:14px;font-weight:bold;}"
+        "QPushButton:hover{background:#e2e8f0;}");
+    connect(back, &QPushButton::clicked, this, [this]{ navigateParkingSection(0); });
+    tbL->addWidget(back);
+
+    QLabel *titleLbl = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x9c  Historique des s\xc3\xa9ances"), topBar);
+    titleLbl->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;}");
+    tbL->addWidget(titleLbl);
+    tbL->addStretch();
+
+    QPushButton *refreshBtn = new QPushButton(QString::fromUtf8("\xf0\x9f\x94\x84"), topBar);
+    refreshBtn->setFixedSize(32,32);
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    refreshBtn->setStyleSheet("QPushButton{background:#f0f2f5;border:none;"
+        "border-radius:16px;font-size:14px;}"
+        "QPushButton:hover{background:#d1f2eb;}");
+    connect(refreshBtn, &QPushButton::clicked, this, [this]{
+        refreshHistoryUI();
+        refreshTrendWidget();
+    });
+    tbL->addWidget(refreshBtn);
+    pL->addWidget(topBar);
+
+    // ── Scroll area ──────────────────────────────────────────────────
+    QScrollArea *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea{border:none;background:#f0f2f5;}"
+        "QScrollBar:vertical{width:6px;background:transparent;}"
+        "QScrollBar::handle:vertical{background:#d0d5db;border-radius:3px;min-height:30px;}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}");
+
+    QWidget *contentW = new QWidget();
+    contentW->setStyleSheet("background:#f0f2f5;");
+    QVBoxLayout *cL = new QVBoxLayout(contentW);
+    cL->setContentsMargins(24,20,24,24);
+    cL->setSpacing(16);
+
+    // ── Stats summary row ─────────────────────────────────────────
+    int totS = ParkingDBManager::instance().getSessionCount(m_currentEleveId);
+    int sucS = ParkingDBManager::instance().getSuccessCount(m_currentEleveId);
+    int pctS = totS > 0 ? (sucS * 100 / totS) : 0;
+
+    QFrame *statsRow = new QFrame(contentW);
+    statsRow->setObjectName("hstStats");
+    statsRow->setStyleSheet(cardSS("hstStats"));
+    statsRow->setGraphicsEffect(shadow(statsRow));
+    QHBoxLayout *srL = new QHBoxLayout(statsRow);
+    srL->setContentsMargins(16,12,16,12);
+    srL->setSpacing(0);
+
+    auto mkStatW = [&](const QString &emoji, const QString &val,
+                       const QString &lbl, const QString &col) -> QWidget*
+    {
+        QWidget *w = new QWidget(statsRow);
+        w->setStyleSheet("background:transparent;");
+        QVBoxLayout *vl = new QVBoxLayout(w);
+        vl->setContentsMargins(8,6,8,6);
+        vl->setSpacing(2);
+        vl->setAlignment(Qt::AlignCenter);
+        QLabel *e = new QLabel(emoji, w);
+        e->setAlignment(Qt::AlignCenter);
+        e->setStyleSheet("QLabel{font-size:20px;background:transparent;border:none;}");
+        vl->addWidget(e);
+        QLabel *v = new QLabel(val, w);
+        v->setAlignment(Qt::AlignCenter);
+        v->setStyleSheet(QString("QLabel{font-size:20px;font-weight:bold;color:%1;"
+            "background:transparent;border:none;}").arg(col));
+        vl->addWidget(v);
+        QLabel *ll = new QLabel(lbl, w);
+        ll->setAlignment(Qt::AlignCenter);
+        ll->setStyleSheet("QLabel{font-size:10px;color:#636e72;"
+            "background:transparent;border:none;}");
+        vl->addWidget(ll);
+        return w;
+    };
+    srL->addWidget(mkStatW(QString::fromUtf8("\xf0\x9f\x93\x8b"),
+        QString::number(totS), QString::fromUtf8("S\xc3\xa9ances"), "#6c5ce7"), 1);
+    srL->addWidget(mkStatW(QString::fromUtf8("\xe2\x9c\x85"),
+        QString::number(sucS), QString::fromUtf8("R\xc3\xa9ussites"), "#00b894"), 1);
+    srL->addWidget(mkStatW(QString::fromUtf8("\xf0\x9f\x8e\xaf"),
+        QString("%1%").arg(pctS), "Taux", "#fdcb6e"), 1);
+    cL->addWidget(statsRow);
+
+    // ── Trend 1: Score over sessions ─────────────────────────────
+    cL->addWidget(createPerformanceTrendCard());
+
+    // ── Trend 2: Per-maneuver mastery bars ───────────────────────
+    {
+        QFrame *card2 = new QFrame(contentW);
+        card2->setObjectName("mTrend");
+        card2->setStyleSheet(cardSS("mTrend"));
+        card2->setGraphicsEffect(shadow(card2));
+        QVBoxLayout *cl2 = new QVBoxLayout(card2);
+        cl2->setContentsMargins(18,14,18,18);
+        cl2->setSpacing(10);
+
+        QLabel *t2 = new QLabel(
+            QString::fromUtf8("\xf0\x9f\x8f\x86  Ma\xc3\xaetrise par man\xc5\x93uvre"),card2);
+        t2->setStyleSheet("QLabel{font-size:13px;font-weight:bold;color:#2d3436;"
+            "background:transparent;border:none;}");
+        cl2->addWidget(t2);
+
+        QStringList cols2 = {"#6c5ce7","#00b894","#fdcb6e","#e17055","#74b9ff"};
+        for (int i = 0; i < qMin(5, m_maneuverNames.size()); i++) {
+            int att2 = m_maneuverAttemptCounts.value(i,0);
+            int suc2 = m_maneuverSuccessCounts.value(i,0);
+            int pct2 = att2 > 0 ? (suc2*100/att2) : 0;
+
+            QHBoxLayout *rw = new QHBoxLayout();
+            rw->setSpacing(10);
+            QLabel *nm2 = new QLabel(m_maneuverNames.value(i,""), card2);
+            nm2->setFixedWidth(100);
+            nm2->setStyleSheet("QLabel{font-size:11px;color:#2d3436;"
+                "background:transparent;border:none;}");
+            rw->addWidget(nm2);
+
+            QProgressBar *bar = new QProgressBar(card2);
+            bar->setRange(0,100);
+            bar->setValue(pct2);
+            bar->setTextVisible(false);
+            bar->setFixedHeight(10);
+            bar->setStyleSheet(QString(
+                "QProgressBar{background:#f0f2f5;border-radius:5px;border:none;}"
+                "QProgressBar::chunk{background:%1;border-radius:5px;}").arg(cols2[i]));
+            rw->addWidget(bar, 1);
+
+            QLabel *pl = new QLabel(QString("%1%").arg(pct2), card2);
+            pl->setFixedWidth(38);
+            pl->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+            pl->setStyleSheet(QString(
+                "QLabel{font-size:11px;font-weight:bold;color:%1;"
+                "background:transparent;border:none;}").arg(cols2[i]));
+            rw->addWidget(pl);
+            cl2->addLayout(rw);
+        }
+        cL->addWidget(card2);
+    }
+
+    // ── Full history list ─────────────────────────────────────────
+    QFrame *histCard = new QFrame(contentW);
+    histCard->setObjectName("histFull");
+    histCard->setStyleSheet(cardSS("histFull"));
+    histCard->setGraphicsEffect(shadow(histCard));
+    QVBoxLayout *hcL = new QVBoxLayout(histCard);
+    hcL->setContentsMargins(18,14,18,14);
+    hcL->setSpacing(8);
+
+    QLabel *hTitle = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x93\x9c  Toutes les s\xc3\xa9ances"), histCard);
+    hTitle->setStyleSheet("QLabel{font-size:13px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;}");
+    hcL->addWidget(hTitle);
+
+    // NOTE: m_historyLayout is already created in createHomePage's createHistoryCard().
+    // Here we create a NEW layout (for this page) and populate it via refreshHistoryUI().
+    // refreshHistoryUI() writes to m_historyLayout, so we point m_historyLayout here.
+    m_historyLayout = new QVBoxLayout();
+    m_historyLayout->setSpacing(4);
+    QLabel *emptyLbl = new QLabel(
+        QString::fromUtf8(
+            "\xf0\x9f\x93\xad  Aucune s\xc3\xa9ance\n"
+            "Commencez votre premi\xc3\xa8re pratique!"),
+        histCard);
+    emptyLbl->setAlignment(Qt::AlignCenter);
+    emptyLbl->setStyleSheet(
+        "QLabel{font-size:11px;color:#b2bec3;background:#f8f8f8;"
+        "border-radius:10px;padding:16px;border:none;}");
+    m_historyLayout->addWidget(emptyLbl);
+    hcL->addLayout(m_historyLayout);
+    cL->addWidget(histCard);
+
+    cL->addStretch();
+    scroll->setWidget(contentW);
+    pL->addWidget(scroll, 1);
+    return page;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PAGE 8 — BADGES (redesigned like Code section)
+// ═══════════════════════════════════════════════════════════════════
+QWidget* ParkingWidget::createBadgesPage()
+{
+    QWidget *page = new QWidget(this);
+    page->setObjectName("badgesPage");
+    page->setStyleSheet(QString("QWidget#badgesPage{%1}").arg(BG));
+
+    QVBoxLayout *pL = new QVBoxLayout(page);
+    pL->setContentsMargins(0,0,0,0);
+    pL->setSpacing(0);
+
+    // ── Top bar ──────────────────────────────────────────────────────
+    QWidget *topBar = new QWidget(page);
+    topBar->setFixedHeight(52);
+    topBar->setStyleSheet("background:white;border-bottom:2px solid #00b894;");
+    QHBoxLayout *tbL = new QHBoxLayout(topBar);
+    tbL->setContentsMargins(16,0,16,0);
+    tbL->setSpacing(10);
+
+    QPushButton *back = new QPushButton(QString::fromUtf8("\xe2\x86\x90"), topBar);
+    back->setFixedSize(32,32);
+    back->setCursor(Qt::PointingHandCursor);
+    back->setStyleSheet("QPushButton{background:#f0f2f5;color:#2d3436;border:none;"
+        "border-radius:16px;font-size:14px;font-weight:bold;}"
+        "QPushButton:hover{background:#e2e8f0;}");
+    connect(back, &QPushButton::clicked, this, [this]{ navigateParkingSection(0); });
+    tbL->addWidget(back);
+
+    QLabel *titleLbl2 = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x8f\x86  Mes Badges"), topBar);
+    titleLbl2->setStyleSheet("QLabel{font-size:14px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;}");
+    tbL->addWidget(titleLbl2);
+    tbL->addStretch();
+    pL->addWidget(topBar);
+
+    // ── Scroll area ──────────────────────────────────────────────────
+    QScrollArea *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea{border:none;background:#f0f2f5;}"
+        "QScrollBar:vertical{width:6px;background:transparent;}"
+        "QScrollBar::handle:vertical{background:#d0d5db;border-radius:3px;min-height:30px;}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}");
+
+    QWidget *contentW = new QWidget();
+    contentW->setStyleSheet("background:#f0f2f5;");
+    QVBoxLayout *cL = new QVBoxLayout(contentW);
+    cL->setContentsMargins(24,20,24,24);
+    cL->setSpacing(16);
+
+    QLabel *hdrLbl = new QLabel(
+        QString::fromUtf8("\xf0\x9f\x8f\x86  R\xc3\xa9compenses de progression"), contentW);
+    hdrLbl->setStyleSheet("QLabel{font-size:15px;font-weight:bold;color:#2d3436;"
+        "background:transparent;border:none;padding-bottom:4px;}");
+    cL->addWidget(hdrLbl);
+
+    QLabel *subLbl = new QLabel(
+        QString::fromUtf8(
+            "D\xc3\xa9bloquez des badges en progressant dans vos entra\xc3\xaenements"),
+        contentW);
+    subLbl->setStyleSheet("QLabel{font-size:12px;color:#636e72;"
+        "background:transparent;border:none;padding-bottom:8px;}");
+    cL->addWidget(subLbl);
+
+    // ── Badge definitions ──────────────────────────────────────────
+    struct BadgeDef {
+        QString icon, name, desc, gradFrom, gradTo;
+    };
+    QList<BadgeDef> defs = {
+        { QString::fromUtf8("\xf0\x9f\x8c\xb1"),
+          QString::fromUtf8("Premier Pas"),
+          QString::fromUtf8("Terminez votre 1\xc3\xa8re s\xc3\xa9ance"),
+          "#00b894","#00cec9"},
+        { QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f"),
+          QString::fromUtf8("Parall\xc3\xa8le"),
+          QString::fromUtf8("3 s\xc3\xa9ances Cr\xc3\xa9neau r\xc3\xa9ussies"),
+          "#6c5ce7","#a29bfe"},
+        { QString::fromUtf8("\xe2\x9a\xa1"),
+          QString::fromUtf8("Rapide"),
+          QString::fromUtf8("Session en moins de 90 secondes"),
+          "#fdcb6e","#e17055"},
+        { QString::fromUtf8("\xf0\x9f\x94\xa5"),
+          QString::fromUtf8("3 Jours"),
+          QString::fromUtf8("3 jours d'entra\xc3\xaenement cons\xc3\xa9cutifs"),
+          "#e17055","#fd79a8"},
+        { QString::fromUtf8("\xf0\x9f\x8e\xaf"),
+          QString::fromUtf8("Parfait"),
+          QString::fromUtf8("Score de 100% dans une s\xc3\xa9ance"),
+          "#00cec9","#55efc4"},
+        { QString::fromUtf8("\xf0\x9f\x91\x91"),
+          QString::fromUtf8("Master"),
+          QString::fromUtf8("10+ s\xc3\xa9ances avec 80%+ de r\xc3\xa9ussite"),
+          "#6c5ce7","#a29bfe"}
+    };
+
+    // Check unlock status from DB
+    int totSess = ParkingDBManager::instance().getSessionCount(m_currentEleveId);
+    int sucSess = ParkingDBManager::instance().getSuccessCount(m_currentEleveId);
+    auto sessAll = ParkingDBManager::instance().getSessionsEleve(m_currentEleveId, 200);
+    bool hasPerfect = false, hasRapid = false;
+    int  creaneauSucc = 0;
+    for (const auto &s : sessAll) {
+        int err3 = s["nb_erreurs"].toInt();
+        int cal3 = s["nb_calages"].toInt();
+        bool obs3 = s.contains("contact_obstacle") && s["contact_obstacle"].toBool();
+        int sc3 = 100;
+        if (!s["reussi"].toBool()) sc3 -= 30;
+        sc3 -= err3*10; sc3 -= cal3*15; if(obs3) sc3 -= 40;
+        sc3 = qMax(0,sc3);
+        if (sc3 >= 100) hasPerfect = true;
+        if (s["reussi"].toBool() && s["duration_seconds"].toInt() < 90) hasRapid = true;
+        if (s["maneuver_type"].toString() == "creneau" && s["reussi"].toBool()) creaneauSucc++;
+    }
+    QList<bool> unlocked = {
+        totSess >= 1,
+        creaneauSucc >= 3,
+        hasRapid,
+        m_practiceStreak >= 3,
+        hasPerfect,
+        (totSess >= 10 && sucSess * 100 / qMax(1,totSess) >= 80)
+    };
+
+    // Progress toward each badge (0.0–1.0)
+    QList<double> progress = {
+        qMin(1.0, totSess / 1.0),
+        qMin(1.0, creaneauSucc / 3.0),
+        hasRapid ? 1.0 : 0.0,
+        qMin(1.0, m_practiceStreak / 3.0),
+        hasPerfect ? 1.0 : 0.0,
+        (totSess >= 10 && sucSess*100/qMax(1,totSess) >= 80) ? 1.0
+            : qMin(1.0, totSess / 10.0)
+    };
+
+    // Badge grid (2 columns)
+    m_badgeCards.clear();
+    QGridLayout *grid = new QGridLayout();
+    grid->setSpacing(14);
+
+    for (int i = 0; i < defs.size(); i++) {
+        const BadgeDef &b = defs[i];
+        bool ok = unlocked.value(i, false);
+        double prg = progress.value(i, 0.0);
+
+        QFrame *card = new QFrame(contentW);
+        QString cid = QString("bdg%1").arg(i);
+        card->setObjectName(cid);
+        card->setStyleSheet(QString(
+            "QFrame#%1{background:white;border-radius:16px;"
+            "border:2px solid %2;}").arg(cid, ok ? b.gradFrom : "#e2e8f0"));
+        auto *sh = new QGraphicsDropShadowEffect(card);
+        sh->setBlurRadius(ok ? 20 : 8);
+        sh->setColor(ok ? QColor(b.gradFrom) : QColor(0,0,0,12));
+        sh->setOffset(0, ok ? 5 : 2);
+        card->setGraphicsEffect(sh);
+        m_badgeCards.append(card);
+
+        QVBoxLayout *cl3 = new QVBoxLayout(card);
+        cl3->setContentsMargins(16,20,16,16);
+        cl3->setSpacing(10);
+        cl3->setAlignment(Qt::AlignHCenter);
+
+        // Icon circle — gradient when unlocked, grey with lock when locked
+        QLabel *icLbl = new QLabel(ok ? b.icon : QString::fromUtf8("\xf0\x9f\x94\x92"), card);
+        icLbl->setFixedSize(72,72);
+        icLbl->setAlignment(Qt::AlignCenter);
+        icLbl->setStyleSheet(ok
+            ? QString("QLabel{font-size:32px;"
+                "background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+                "stop:0 %1,stop:1 %2);"
+                "border-radius:36px;border:none;}").arg(b.gradFrom, b.gradTo)
+            : "QLabel{font-size:28px;background:#f0f2f5;"
+              "border-radius:36px;border:none;}");
+        cl3->addWidget(icLbl, 0, Qt::AlignHCenter);
+
+        // Name
+        QLabel *nameLbl = new QLabel(b.name, card);
+        nameLbl->setAlignment(Qt::AlignCenter);
+        nameLbl->setStyleSheet(QString(
+            "QLabel{font-size:13px;font-weight:bold;color:%1;"
+            "background:transparent;border:none;}").arg(ok?"#2d3436":"#b2bec3"));
+        cl3->addWidget(nameLbl);
+
+        // Description
+        QLabel *descLbl = new QLabel(b.desc, card);
+        descLbl->setAlignment(Qt::AlignCenter);
+        descLbl->setWordWrap(true);
+        descLbl->setStyleSheet(QString(
+            "QLabel{font-size:10px;color:%1;"
+            "background:transparent;border:none;padding:0 4px;}"
+            ).arg(ok?"#636e72":"#c0c0c0"));
+        cl3->addWidget(descLbl);
+
+        // Progress bar (shown when not yet unlocked)
+        if (!ok && prg > 0.0) {
+            QProgressBar *pBar = new QProgressBar(card);
+            pBar->setRange(0,100);
+            pBar->setValue(qRound(prg * 100));
+            pBar->setTextVisible(false);
+            pBar->setFixedHeight(6);
+            pBar->setStyleSheet(QString(
+                "QProgressBar{background:#f0f2f5;border-radius:3px;border:none;}"
+                "QProgressBar::chunk{background:%1;border-radius:3px;}").arg(b.gradFrom));
+            cl3->addWidget(pBar);
+        }
+
+        // Status tag
+        QLabel *tag = new QLabel(
+            ok ? QString::fromUtf8("\xe2\x9c\x94  D\xc3\xa9bloqu\xc3\xa9")
+               : QString::fromUtf8("\xf0\x9f\x94\x92  Verrouill\xc3\xa9"), card);
+        tag->setAlignment(Qt::AlignCenter);
+        tag->setStyleSheet(ok
+            ? QString("QLabel{font-size:10px;font-weight:bold;color:white;"
+                "background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+                "stop:0 %1,stop:1 %2);"
+                "border-radius:10px;padding:3px 12px;border:none;}").arg(b.gradFrom, b.gradTo)
+            : "QLabel{font-size:10px;color:#b2bec3;background:#f8f8f8;"
+              "border-radius:10px;padding:3px 12px;border:none;}");
+        cl3->addWidget(tag);
+
+        grid->addWidget(card, i/2, i%2);
+    }
+    cL->addLayout(grid);
+    cL->addStretch();
+    scroll->setWidget(contentW);
+    pL->addWidget(scroll, 1);
+    return page;
+}
+
+// ── refreshBadges — rebuild the badges page in-place ────────────
+void ParkingWidget::refreshBadges()
+{
+    if (m_stack->count() < 9) return;
+    QWidget *old = m_stack->widget(8);
+    m_stack->removeWidget(old);
+    old->deleteLater();
+    m_stack->insertWidget(8, createBadgesPage());
 }

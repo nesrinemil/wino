@@ -241,7 +241,7 @@ QWidget* AdminWidget::createBanner()
     titleCol->addWidget(t);
     QLabel *sub = new QLabel(
         m_isMoniteur
-            ? QString::fromUtf8("Gestion Parking · Wino Driving School")
+            ? QString::fromUtf8("Parking Management · Wino Driving School")
             : QString::fromUtf8("Control Panel · Wino Driving School"),
         b);
     sub->setStyleSheet("QLabel{font-size:11px;color:rgba(255,255,255,0.7);"
@@ -339,7 +339,7 @@ QWidget* AdminWidget::createKPIRow()
     hl->setSpacing(14);
     hl->addWidget(createKPICard(QString::fromUtf8("\xf0\x9f\x91\xa5"), QString::fromUtf8("Active Students"),
         "stop:0 #00b894,stop:1 #55efc4", &m_kpiEleves, &m_kpiElevesSub));
-    hl->addWidget(createKPICard(QString::fromUtf8("🧑‍🏫"), "Moniteurs",
+    hl->addWidget(createKPICard(QString::fromUtf8("🧑‍🏫"), "Instructors",
         "stop:0 #00cec9,stop:1 #81ecec", &m_kpiMoniteurs, &m_kpiMoniteursSub));
     hl->addWidget(createKPICard(QString::fromUtf8("\xf0\x9f\x9a\x97"), "Fleet",
         "stop:0 #0984e3,stop:1 #74b9ff", &m_kpiVehicules, &m_kpiVehiculesSub));
@@ -372,7 +372,7 @@ QWidget* AdminWidget::createNavBar()
     struct NavEntry { QString label; int pageIdx; };
     const QList<NavEntry> allTabs = {
         { QString::fromUtf8("📊 Dashboard"),          0 },
-        { QString::fromUtf8("🧑‍🏫 Moniteurs"),       1 },
+        { QString::fromUtf8("🧑‍🏫 Instructors"),      1 },
         { QString::fromUtf8("\xf0\x9f\x91\xa5 Students"), 2 },
         { QString::fromUtf8("🚗 Vehicles"),            3 },
         { QString::fromUtf8("📋 Sessions"),            4 },
@@ -381,8 +381,6 @@ QWidget* AdminWidget::createNavBar()
         { QString::fromUtf8("🗓 Exam Sessions"),       7 },
         { QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f Steps"), 8 },
         { QString::fromUtf8("\xf0\x9f\x8f\x86 Exam Results"), 9 },
-        // Index 10 — parking-phase students, instructor view (Oracle)
-        { QString::fromUtf8("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x8e\x93 \xc3\x89tudiants Parking"), 10 },
     };
 
     // For the instructor/moniteur role, show only relevant pages;
@@ -396,14 +394,9 @@ QWidget* AdminWidget::createNavBar()
         "QPushButton:hover{background:#e8f8f5;border-color:" + GREEN + ";color:" + GREEN + ";}"
         "QPushButton:checked{background:" + GREEN + ";color:white;border-color:" + GREEN + ";}";
 
-    // Page 10 is only visible for the moniteur/instructor role
-    const QSet<int> shownOnlyForMoniteur = { 10 };
-
     for (const NavEntry &e : allTabs) {
         // Skip admin-only tabs when in moniteur/instructor mode
         if (m_isMoniteur && hiddenForMoniteur.contains(e.pageIdx)) continue;
-        // Skip moniteur-only tabs when in admin mode
-        if (!m_isMoniteur && shownOnlyForMoniteur.contains(e.pageIdx)) continue;
 
         QPushButton *btn = new QPushButton(e.label, bar);
         btn->setProperty("pageIndex", e.pageIdx);
@@ -570,7 +563,7 @@ QWidget* AdminWidget::createMoniteursPage()
     lay->setSpacing(14);
 
     QHBoxLayout *toolbar = new QHBoxLayout();
-    QPushButton *addBtn = new QPushButton(QString::fromUtf8("➕ New Moniteur"), page);
+    QPushButton *addBtn = new QPushButton(QString::fromUtf8("➕ New Instructor"), page);
     addBtn->setCursor(Qt::PointingHandCursor);
     addBtn->setStyleSheet(btnCSS(GREEN, "#00a884"));
     connect(addBtn, &QPushButton::clicked, this, &AdminWidget::showAddMoniteurDialog);
@@ -649,7 +642,7 @@ void AdminWidget::refreshMoniteursTable()
 void AdminWidget::showAddMoniteurDialog()
 {
     QDialog dlg(this);
-    dlg.setWindowTitle(QString::fromUtf8("New Moniteur"));
+    dlg.setWindowTitle(QString::fromUtf8("New Instructor"));
     dlg.setFixedWidth(440);
     dlg.setStyleSheet("QDialog{background:white;border-radius:12px;}");
 
@@ -657,7 +650,7 @@ void AdminWidget::showAddMoniteurDialog()
     main->setContentsMargins(28,24,28,24);
     main->setSpacing(16);
 
-    QLabel *title = new QLabel(QString::fromUtf8("🧑‍🏫 Add Moniteur"), &dlg);
+    QLabel *title = new QLabel(QString::fromUtf8("🧑‍🏫 Add Instructor"), &dlg);
     title->setStyleSheet(QString("QLabel{font-size:16px;font-weight:bold;color:%1;}").arg(TXT));
     main->addWidget(title);
 
@@ -670,7 +663,7 @@ void AdminWidget::showAddMoniteurDialog()
     QLineEdit *email = new QLineEdit(&dlg);   email->setStyleSheet(inputCSS()); email->setPlaceholderText("moniteur@wino.tn");
 
     form->addRow("Nom *", nom);
-    form->addRow(QString::fromUtf8("Prénom *"), prenom);
+    form->addRow(QString::fromUtf8("First name *"), prenom);
     form->addRow(QString::fromUtf8("Phone"), tel);
     form->addRow("Email", email);
     main->addLayout(form);
@@ -692,7 +685,7 @@ void AdminWidget::showAddMoniteurDialog()
 
     if (dlg.exec() == QDialog::Accepted) {
         if (nom->text().trimmed().isEmpty() || prenom->text().trimmed().isEmpty()) {
-            QMessageBox::warning(this, "", QString::fromUtf8("Nom et prénom obligatoires."));
+            QMessageBox::warning(this, "", "Name and first name are required.");
             return;
         }
         int newId = ParkingDBManager::instance().addMoniteur(
@@ -721,7 +714,7 @@ void AdminWidget::showEditMoniteurDialog(int id)
     if (m.isEmpty()) return;
 
     QDialog dlg(this);
-    dlg.setWindowTitle(QString::fromUtf8("Edit Moniteur #%1").arg(id));
+    dlg.setWindowTitle(QString::fromUtf8("Edit Instructor #%1").arg(id));
     dlg.setFixedWidth(440);
     dlg.setStyleSheet("QDialog{background:white;}");
 
@@ -735,7 +728,7 @@ void AdminWidget::showEditMoniteurDialog(int id)
     QLineEdit *email = new QLineEdit(m["email"].toString(), &dlg);   email->setStyleSheet(inputCSS());
 
     form->addRow("Nom *", nom);
-    form->addRow(QString::fromUtf8("Prénom *"), prenom);
+    form->addRow(QString::fromUtf8("First name *"), prenom);
     form->addRow(QString::fromUtf8("Phone"), tel);
     form->addRow("Email", email);
 
@@ -747,7 +740,7 @@ void AdminWidget::showEditMoniteurDialog(int id)
 
     if (dlg.exec() == QDialog::Accepted) {
         if (nom->text().trimmed().isEmpty() || prenom->text().trimmed().isEmpty()) {
-            QMessageBox::warning(this, "", QString::fromUtf8("Nom et prénom obligatoires."));
+            QMessageBox::warning(this, "", "Name and first name are required.");
             return;
         }
         ParkingDBManager::instance().updateMoniteur(id, nom->text().trimmed(), prenom->text().trimmed(),
@@ -761,14 +754,14 @@ void AdminWidget::deleteMoniteur(int id)
 {
     auto m = ParkingDBManager::instance().getMoniteur(id);
     if (QMessageBox::question(this, "Delete",
-            QString::fromUtf8("Delete moniteur %1 %2 ?").arg(m["prenom"].toString(), m["nom"].toString()),
+            QString("Delete instructor %1 %2?").arg(m["prenom"].toString(), m["nom"].toString()),
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         if (ParkingDBManager::instance().deleteMoniteur(id)) {
             
             refreshAll();
         } else {
             QMessageBox::warning(this, "Error",
-                QString::fromUtf8("Cannot delete this moniteur.\nThey are assigned to exam reservations."));
+                "Cannot delete this instructor.\nThey are assigned to exam reservations.");
         }
     }
 }
@@ -927,10 +920,10 @@ void AdminWidget::showAddEleveDialog()
     QLineEdit *permis = new QLineEdit(&dlg);  permis->setStyleSheet(inputCSS()); permis->setPlaceholderText("TN-2026-XXXXX");
 
     form->addRow("Nom *", nom);
-    form->addRow(QString::fromUtf8("Prénom *"), prenom);
+    form->addRow(QString::fromUtf8("First name *"), prenom);
     form->addRow(QString::fromUtf8("Phone"), tel);
     form->addRow("Email", email);
-    form->addRow(QString::fromUtf8("N° License"), permis);
+    form->addRow("License #", permis);
     main->addLayout(form);
 
     QHBoxLayout *btns = new QHBoxLayout();
@@ -950,7 +943,7 @@ void AdminWidget::showAddEleveDialog()
 
     if (dlg.exec() == QDialog::Accepted) {
         if (nom->text().trimmed().isEmpty() || prenom->text().trimmed().isEmpty()) {
-            QMessageBox::warning(this, "", QString::fromUtf8("Nom et prénom obligatoires."));
+            QMessageBox::warning(this, "", "Name and first name are required.");
             return;
         }
         ParkingDBManager::instance().addEleve(
@@ -982,10 +975,10 @@ void AdminWidget::showEditEleveDialog(int id)
     QLineEdit *permis = new QLineEdit(e["numero_permis"].toString(), &dlg); permis->setStyleSheet(inputCSS());
 
     form->addRow("Nom *", nom);
-    form->addRow(QString::fromUtf8("Prénom *"), prenom);
+    form->addRow(QString::fromUtf8("First name *"), prenom);
     form->addRow(QString::fromUtf8("Phone"), tel);
     form->addRow("Email", email);
-    form->addRow(QString::fromUtf8("N° License"), permis);
+    form->addRow("License #", permis);
 
     QDialogButtonBox *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
     bb->button(QDialogButtonBox::Save)->setStyleSheet(btnCSS(BLUE, "#0770c2"));
@@ -1027,8 +1020,7 @@ void AdminWidget::showEleveDetailPanel(int id)
     double depense = db.getTotalDepense(id);
 
     QStringList manTypes = {"creneau", "bataille", "epi", "marche_arriere", "demi_tour"};
-    QStringList manNames = {QString::fromUtf8("Slot"), "Bataille", QString::fromUtf8("Diagonal"),
-                            QString::fromUtf8("Marche arr."), "U-turn"};
+    QStringList manNames = {"Parallel", "Perpendicular", "Diagonal", "Reverse", "U-turn"};
 
     QString manDetails;
     for (int i = 0; i < manTypes.size(); i++) {
@@ -1060,7 +1052,7 @@ void AdminWidget::showEleveDetailPanel(int id)
         "<div style='font-size:24px;font-weight:bold;color:#e17055;'>%9 DT</div>"
         "<div style='font-size:10px;color:#636e72;'>Spent</div></td>"
         "</tr></table>"
-        "<h3 style='color:#2d3436;margin:16px 0 8px;'>📊 Détail par maneuver</h3>"
+        "<h3 style='color:#2d3436;margin:16px 0 8px;'>📊 Detail by maneuver</h3>"
         "<table style='width:100%%;font-size:12px;border-collapse:collapse;'>"
         "<tr style='background:#f8f9fa;font-weight:bold;color:#636e72;'>"
         "<td style='padding:8px;'>Maneuver</td><td align='center'>Best time</td>"
@@ -1075,7 +1067,7 @@ void AdminWidget::showEleveDetailPanel(int id)
         .arg(examReady ? "#e8f8f5" : "#fef3e2")
         .arg(examReady ? "#00b894" : "#e17055")
         .arg(examReady ? QString::fromUtf8("Eligible for ATTT exam") :
-                         QString::fromUtf8("🔒 Not yet eligible — keep training l'training"));
+                         QString::fromUtf8("🔒 Not yet eligible — keep training"));
 
     QDialog dlg(this);
     dlg.setWindowTitle(QString::fromUtf8("Student Profile — %1 %2").arg(e["prenom"].toString(), e["nom"].toString()));
@@ -1344,13 +1336,13 @@ void AdminWidget::showEditVehiculeDialog(int id)
 
 void AdminWidget::deleteVehicule(int id)
 {
-    if (QMessageBox::question(this, "Delete", QString::fromUtf8("Delete ce vehicle ?"),
+    if (QMessageBox::question(this, "Delete", "Delete this vehicle?",
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         if (ParkingDBManager::instance().deleteVehicule(id)) {
             
             refreshAll();
         } else {
-            QMessageBox::warning(this, "Erreur", QString::fromUtf8("Impossible de supprimer cette voiture. Elle est peut-être déjà utilisée dans des sessions ou des réservations."));
+            QMessageBox::warning(this, "Error", "Unable to delete this vehicle. It may already be used in sessions or reservations.");
         }
     }
 }
@@ -1832,11 +1824,11 @@ static const QStringList MANEUVER_KEYS = {
     "creneau", "bataille", "epi", "marche_arriere", "demi_tour"
 };
 static const QStringList MANEUVER_LABELS = {
-    QString::fromUtf8("Parallel (Cr\xe9neau)"),
-    QString::fromUtf8("Perpendicular (Bataille)"),
-    QString::fromUtf8("Diagonal (\xc9pi)"),
-    QString::fromUtf8("Reverse (Marche arri\xe8re)"),
-    QString::fromUtf8("U-turn (Demi-tour)")
+    "Parallel Parking",
+    "Perpendicular Parking",
+    "Diagonal Parking",
+    "Reverse Parking",
+    "U-turn"
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -1858,8 +1850,7 @@ QWidget* AdminWidget::createVideosPage()
     QHBoxLayout *ihl = new QHBoxLayout(info);
     ihl->setContentsMargins(12,8,12,8);
     QLabel *infoLbl = new QLabel(
-        QString::fromUtf8("\xf0\x9f\x8e\xac  Les liens YouTube sont stock\xe9s dans PARKING_MANEUVER_STEPS. "
-                          "Cliquez \xab\xc2\xa0\xc9diter\xc2\xa0\xbb pour modifier l'URL d'une man\u0153uvre."), info);
+        "YouTube links are stored in PARKING_MANEUVER_STEPS. Click 'Edit' to change a maneuver URL.", info);
     infoLbl->setStyleSheet("QLabel{font-size:11px;color:#0984e3;background:transparent;border:none;}");
     infoLbl->setWordWrap(true);
     ihl->addWidget(infoLbl);
@@ -1902,7 +1893,7 @@ void AdminWidget::refreshVideosTable()
         QString url = urlMap.value(key, "");
 
         m_videosTable->setItem(r, 0, new QTableWidgetItem(label));
-        auto *urlItem = new QTableWidgetItem(url.isEmpty() ? QString::fromUtf8("— aucun lien —") : url);
+        auto *urlItem = new QTableWidgetItem(url.isEmpty() ? QString::fromUtf8("— no link —") : url);
         urlItem->setForeground(QColor(url.isEmpty() ? "#b2bec3" : "#0984e3"));
         m_videosTable->setItem(r, 1, urlItem);
 
@@ -1950,7 +1941,7 @@ void AdminWidget::showEditVideoDialog(const QString &maneuverKey)
     lay->addWidget(ttl);
 
     QLabel *hint = new QLabel(
-        QString::fromUtf8("Entrez l'URL YouTube qui sera affich\xe9""e aux \xe9l\xe8ves dans l'onglet Parking."), &dlg);
+        "Enter the YouTube URL that will be shown to students in the Parking tab.", &dlg);
     hint->setStyleSheet("QLabel{font-size:11px;color:#636e72;}");
     hint->setWordWrap(true);
     lay->addWidget(hint);
@@ -1976,8 +1967,7 @@ void AdminWidget::showEditVideoDialog(const QString &maneuverKey)
             refreshVideosTable();
         } else {
             QMessageBox::warning(this, "Info",
-                QString::fromUtf8("Lien sauvegard\xe9. (Si PARKING_MANEUVER_STEPS est vide, "
-                                  "le lien sera charg\xe9 au prochain entra\xeenement.)"));
+                "Link saved. (If PARKING_MANEUVER_STEPS is empty, the link will be loaded at the next training session.)");
             refreshVideosTable();
         }
     }
@@ -2003,8 +1993,8 @@ QWidget* AdminWidget::createExamSessionsPage()
     QHBoxLayout *ihl = new QHBoxLayout(info);
     ihl->setContentsMargins(12,8,12,8);
     QLabel *infoLbl = new QLabel(
-        QString::fromUtf8("🗓  Toutes les r\xe9servations d'examen (table EXAM_REQUEST). "
-                          "Le moniteur peut cr\xe9er, confirmer, annuler ou supprimer."), info);
+        QString::fromUtf8("🗓  All exam reservations (EXAM_REQUEST table). "
+                          "The instructor can create, confirm, cancel or delete."), info);
     infoLbl->setStyleSheet("QLabel{font-size:11px;color:#00b894;background:transparent;border:none;}");
     infoLbl->setWordWrap(true);
     ihl->addWidget(infoLbl);
@@ -2145,7 +2135,7 @@ void AdminWidget::showAddExamSessionDialog()
     lay->setContentsMargins(24,20,24,20);
     lay->setSpacing(14);
 
-    QLabel *ttl = new QLabel(QString::fromUtf8("🗓  Nouvelle r\xe9servation d'examen"), &dlg);
+    QLabel *ttl = new QLabel(QString::fromUtf8("🗓  New Exam Reservation"), &dlg);
     ttl->setStyleSheet("QLabel{font-size:16px;font-weight:bold;color:#2d3436;}");
     lay->addWidget(ttl);
 
@@ -2164,7 +2154,7 @@ void AdminWidget::showAddExamSessionDialog()
         eleveCombo->addItem(
             QString("%1 %2").arg(e["prenom"].toString(), e["nom"].toString()),
             e["id"]);
-    form->addRow(QString::fromUtf8("\xc9l\xe8ve :"), eleveCombo);
+    form->addRow("Student:", eleveCombo);
 
     QComboBox *moniteurCombo = new QComboBox(&dlg);
     moniteurCombo->setStyleSheet(comboSS());
@@ -2172,7 +2162,7 @@ void AdminWidget::showAddExamSessionDialog()
         moniteurCombo->addItem(
             QString("%1 %2").arg(m["prenom"].toString(), m["nom"].toString()),
             m["id"]);
-    form->addRow("Moniteur :", moniteurCombo);
+    form->addRow("Instructor:", moniteurCombo);
 
     QComboBox *vehiculeCombo = new QComboBox(&dlg);
     vehiculeCombo->setStyleSheet(comboSS());
@@ -2180,7 +2170,7 @@ void AdminWidget::showAddExamSessionDialog()
         vehiculeCombo->addItem(
             QString("%1 — %2").arg(v["immatriculation"].toString(), v["modele"].toString()),
             v["id"]);
-    form->addRow(QString::fromUtf8("V\xe9hicule :"), vehiculeCombo);
+    form->addRow("Vehicle:", vehiculeCombo);
 
     QDateEdit *dateEdit = new QDateEdit(&dlg);
     dateEdit->setCalendarPopup(true);
@@ -2195,7 +2185,7 @@ void AdminWidget::showAddExamSessionDialog()
     creneauCombo->setStyleSheet(comboSS());
     for (const QString &sl : QStringList{"08:00","09:00","10:00","11:00","14:00","15:00","16:00","17:00"})
         creneauCombo->addItem(sl);
-    form->addRow(QString::fromUtf8("Cr\xe9neau :"), creneauCombo);
+    form->addRow("Time slot:", creneauCombo);
 
     QDoubleSpinBox *amountSpin = new QDoubleSpinBox(&dlg);
     amountSpin->setRange(0, 9999);
@@ -2203,13 +2193,13 @@ void AdminWidget::showAddExamSessionDialog()
     amountSpin->setSuffix(" DT");
     amountSpin->setStyleSheet("QDoubleSpinBox{border:1.5px solid #e8e8e8;border-radius:10px;"
         "padding:8px 12px;font-size:12px;background:white;color:#2d3436;}");
-    form->addRow("Montant :", amountSpin);
+    form->addRow("Amount:", amountSpin);
 
     lay->addLayout(form);
 
     QDialogButtonBox *btns = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    btns->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("Cr\xe9er"));
+    btns->button(QDialogButtonBox::Ok)->setText("Create");
     btns->button(QDialogButtonBox::Ok)->setStyleSheet(btnCSS(GREEN, "#00a884"));
     btns->button(QDialogButtonBox::Cancel)->setStyleSheet(
         "QPushButton{background:#f0f2f5;color:#636e72;border:none;border-radius:10px;padding:10px 20px;font-size:12px;}");
@@ -2224,7 +2214,7 @@ void AdminWidget::showAddExamSessionDialog()
         int vehiculeId = vehiculeCombo->currentData().toInt();
         if (eleveId <= 0 || moniteurId <= 0 || vehiculeId <= 0) {
             QMessageBox::warning(this, "Error",
-                QString::fromUtf8("V\xe9rifiez qu'il y a au moins un \xe9l\xe8ve, un moniteur et un v\xe9hicule."));
+                "Make sure there is at least one student, an instructor and a vehicle.");
             return;
         }
         int newId = ParkingDBManager::instance().addExamRequestAdmin(
@@ -2240,7 +2230,7 @@ void AdminWidget::showAddExamSessionDialog()
         } else {
             QString err = ParkingDBManager::instance().getLastError();
             QMessageBox::critical(this, "Error", 
-                QString::fromUtf8("Impossible de cr\xe9er la r\xe9servation. V\xe9rifiez la DB.\n\nErreur: %1").arg(err));
+                QString("Unable to create reservation. Check the DB.\n\nError: %1").arg(err));
         }
     }
 }
@@ -2254,7 +2244,7 @@ void AdminWidget::showEditExamSessionDialog(int id)
 void AdminWidget::deleteExamSession(int id)
 {
     if (QMessageBox::question(this, "Delete Exam Request",
-            QString::fromUtf8("Supprimer cette r\xe9servation d'examen ?"),
+            "Delete this exam reservation?",
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         ParkingDBManager::instance().deleteReservation(id);
         
@@ -2404,9 +2394,7 @@ QWidget* AdminWidget::createManeuverStepsPage()
     QHBoxLayout *ihl = new QHBoxLayout(info);
     ihl->setContentsMargins(12,8,12,8);
     QLabel *infoLbl = new QLabel(
-        QString::fromUtf8("\xf0\x9f…  \xc9tapes de man\u0153uvres (PARKING_MANEUVER_STEPS). "
-                          "D\xe9finissez les \xe9tapes pour chacune des 5 man\u0153uvres ATTT. "
-                          "Sans \xe9tapes, le syst\xe8me de guidage ne fonctionne pas pour cette man\u0153uvre."), info);
+        "Maneuver steps (PARKING_MANEUVER_STEPS). Define the steps for each of the 5 ATTT maneuvers. Without steps, the guidance system will not work for this maneuver.", info);
     infoLbl->setStyleSheet("QLabel{font-size:11px;color:#e17055;background:transparent;border:none;}");
     infoLbl->setWordWrap(true);
     ihl->addWidget(infoLbl);
@@ -2504,8 +2492,7 @@ void AdminWidget::showAddManeuverStepDialog()
     QVBoxLayout *lay = new QVBoxLayout(&dlg);
     lay->setContentsMargins(24,20,24,20);
     lay->setSpacing(14);
-
-    QLabel *ttl = new QLabel(QString::fromUtf8("\xf0\x9f…  Nouvelle \xe9tape de man\u0153uvre"), &dlg);
+    QLabel *ttl = new QLabel("New Maneuver Step", &dlg);
     ttl->setStyleSheet("QLabel{font-size:16px;font-weight:bold;color:#2d3436;}");
     lay->addWidget(ttl);
 
@@ -2529,27 +2516,27 @@ void AdminWidget::showAddManeuverStepDialog()
     stepNumSpin->setValue(1);
     stepNumSpin->setStyleSheet("QSpinBox{border:1.5px solid #e8e8e8;border-radius:10px;"
         "padding:8px 12px;font-size:12px;background:white;color:#2d3436;}");
-    form->addRow(QString::fromUtf8("N\xb0 \xe9tape :"), stepNumSpin);
+    form->addRow("Step #:", stepNumSpin);
 
     QLineEdit *nameEdit = new QLineEdit(&dlg);
     nameEdit->setPlaceholderText(QString::fromUtf8("ex: D\xe9marrage"));
     nameEdit->setStyleSheet(inputCSS());
-    form->addRow(QString::fromUtf8("Nom :"), nameEdit);
+    form->addRow("Name:", nameEdit);
 
     QLineEdit *sensorEdit = new QLineEdit(&dlg);
     sensorEdit->setPlaceholderText("ex: capteur_droit=obstacle");
     sensorEdit->setStyleSheet(inputCSS());
-    form->addRow("Sensor condition :", sensorEdit);
+    form->addRow("Sensor condition:", sensorEdit);
 
     QLineEdit *guidanceEdit = new QLineEdit(&dlg);
     guidanceEdit->setPlaceholderText(QString::fromUtf8("Message affich\xe9 \xe0 l'\xe9l\xe8ve"));
     guidanceEdit->setStyleSheet(inputCSS());
-    form->addRow("Guidance message :", guidanceEdit);
+    form->addRow("Guidance message:", guidanceEdit);
 
     QLineEdit *audioEdit = new QLineEdit(&dlg);
-    audioEdit->setPlaceholderText(QString::fromUtf8("Message audio (optionnel)"));
+    audioEdit->setPlaceholderText("Audio message (optional)");
     audioEdit->setStyleSheet(inputCSS());
-    form->addRow("Audio message :", audioEdit);
+    form->addRow("Audio message:", audioEdit);
 
     QSpinBox *delaySpin = new QSpinBox(&dlg);
     delaySpin->setRange(0, 30000);
@@ -2557,19 +2544,19 @@ void AdminWidget::showAddManeuverStepDialog()
     delaySpin->setSuffix(" ms");
     delaySpin->setStyleSheet("QSpinBox{border:1.5px solid #e8e8e8;border-radius:10px;"
         "padding:8px 12px;font-size:12px;background:white;color:#2d3436;}");
-    form->addRow("Delay before :", delaySpin);
+    form->addRow("Delay before:", delaySpin);
 
     QComboBox *stopCombo = new QComboBox(&dlg);
     stopCombo->setStyleSheet(comboSS());
     stopCombo->addItem("No", 0);
     stopCombo->addItem(QString::fromUtf8("Yes — Stop required"), 1);
-    form->addRow(QString::fromUtf8("Stop requis :"), stopCombo);
+    form->addRow("Stop required:", stopCombo);
 
     lay->addLayout(form);
 
     QDialogButtonBox *btns = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    btns->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("Ajouter"));
+    btns->button(QDialogButtonBox::Ok)->setText("Add");
     btns->button(QDialogButtonBox::Ok)->setStyleSheet(btnCSS(ORANGE, "#c0604a"));
     btns->button(QDialogButtonBox::Cancel)->setStyleSheet(
         "QPushButton{background:#f0f2f5;color:#636e72;border:none;border-radius:10px;padding:10px 20px;font-size:12px;}");
@@ -2593,7 +2580,7 @@ void AdminWidget::showAddManeuverStepDialog()
             refreshManeuverStepsTable();
         } else {
             QMessageBox::critical(this, "Error",
-                QString::fromUtf8("Impossible d'ajouter l'\xe9tape. V\xe9rifiez que le num\xe9ro d'\xe9tape n'existe pas d\xe9j\xe0 pour cette man\u0153uvre."));
+                "Unable to add step. Check that the step number doesn't already exist for this maneuver.");
         }
     }
 }
@@ -2617,7 +2604,7 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
     lay->setSpacing(14);
 
     QLabel *ttl = new QLabel(
-        QString::fromUtf8("\xe2\x9c\x8f\xef\xb8\x8f  Modifier \xe9tape #") +
+        QString::fromUtf8("\xe2\x9c\x8f\xef\xb8\x8f  Edit step #") +
         step["step_number"].toString() + " — " + maneuverType, &dlg);
     ttl->setStyleSheet("QLabel{font-size:16px;font-weight:bold;color:#2d3436;}");
     lay->addWidget(ttl);
@@ -2630,23 +2617,23 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
     stepNumSpin->setValue(step["step_number"].toInt());
     stepNumSpin->setStyleSheet("QSpinBox{border:1.5px solid #e8e8e8;border-radius:10px;"
         "padding:8px 12px;font-size:12px;background:white;color:#2d3436;}");
-    form->addRow(QString::fromUtf8("N\xb0 \xe9tape :"), stepNumSpin);
+    form->addRow("Step #:", stepNumSpin);
 
     QLineEdit *nameEdit = new QLineEdit(step["step_name"].toString(), &dlg);
     nameEdit->setStyleSheet(inputCSS());
-    form->addRow(QString::fromUtf8("Nom :"), nameEdit);
+    form->addRow("Name:", nameEdit);
 
     QLineEdit *sensorEdit = new QLineEdit(step["sensor_condition"].toString(), &dlg);
     sensorEdit->setStyleSheet(inputCSS());
-    form->addRow("Sensor condition :", sensorEdit);
+    form->addRow("Sensor condition:", sensorEdit);
 
     QLineEdit *guidanceEdit = new QLineEdit(step["guidance_message"].toString(), &dlg);
     guidanceEdit->setStyleSheet(inputCSS());
-    form->addRow("Guidance message :", guidanceEdit);
+    form->addRow("Guidance message:", guidanceEdit);
 
     QLineEdit *audioEdit = new QLineEdit(step["audio_message"].toString(), &dlg);
     audioEdit->setStyleSheet(inputCSS());
-    form->addRow("Audio message :", audioEdit);
+    form->addRow("Audio message:", audioEdit);
 
     QSpinBox *delaySpin = new QSpinBox(&dlg);
     delaySpin->setRange(0, 30000);
@@ -2654,7 +2641,7 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
     delaySpin->setSuffix(" ms");
     delaySpin->setStyleSheet("QSpinBox{border:1.5px solid #e8e8e8;border-radius:10px;"
         "padding:8px 12px;font-size:12px;background:white;color:#2d3436;}");
-    form->addRow("Delay before :", delaySpin);
+    form->addRow("Delay before:", delaySpin);
 
     auto comboSS = [](){
         return QString("QComboBox{border:1.5px solid #e8e8e8;border-radius:10px;"
@@ -2666,7 +2653,7 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
     stopCombo->addItem("No", 0);
     stopCombo->addItem(QString::fromUtf8("Yes — Stop required"), 1);
     stopCombo->setCurrentIndex(step["is_stop_required"].toInt() == 1 ? 1 : 0);
-    form->addRow(QString::fromUtf8("Stop requis :"), stopCombo);
+    form->addRow("Stop required:", stopCombo);
 
     lay->addLayout(form);
 
@@ -2694,7 +2681,7 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
             refreshManeuverStepsTable();
         } else {
             QMessageBox::critical(this, "Error",
-                QString::fromUtf8("Impossible de modifier l'\xe9tape. V\xe9rifiez qu'il n'y a pas de conflit de num\xe9ro."));
+                "Unable to edit step. Check there is no step number conflict.");
         }
     }
 }
@@ -2702,15 +2689,14 @@ void AdminWidget::showEditManeuverStepDialog(int stepId, const QString &maneuver
 void AdminWidget::deleteManeuverStep(int stepId)
 {
     if (QMessageBox::question(this, "Delete Step",
-            QString::fromUtf8("Supprimer cette \xe9tape de man\u0153uvre ? "
-                              "Cela peut affecter le guidage en temps r\xe9el."),
+            "Delete this maneuver step? This may affect real-time guidance.",
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         bool ok = ParkingDBManager::instance().deleteManeuverStep(stepId);
         if (ok) {
             
             refreshManeuverStepsTable();
         } else {
-            QMessageBox::critical(this, "Error", QString::fromUtf8("Impossible de supprimer l'\xe9tape."));
+            QMessageBox::critical(this, "Error", "Unable to delete step.");
         }
     }
 }
@@ -2733,9 +2719,9 @@ QWidget* AdminWidget::createExamResultsPage()
     QHBoxLayout *ihl = new QHBoxLayout(info);
     ihl->setContentsMargins(12,8,12,8);
     QLabel *infoLbl = new QLabel(
-        QString::fromUtf8("\xf0\x9f\x8f\x86  R\xe9sultats d'examen (PARKING_EXAM_RESULTS). "
-                          "G\xe9n\xe9r\xe9s automatiquement lors des examens en mode parking. "
-                          "L'admin peut consulter et supprimer des r\xe9sultats erron\xe9s."), info);
+        QString::fromUtf8("\xf0\x9f\x8f\x86  Exam results (PARKING_EXAM_RESULTS). "
+                          "Generated automatically during parking mode exams. "
+                          "The admin can view and delete incorrect results."), info);
     infoLbl->setStyleSheet("QLabel{font-size:11px;color:#b7950b;background:transparent;border:none;}");
     infoLbl->setWordWrap(true);
     ihl->addWidget(infoLbl);
@@ -2813,14 +2799,14 @@ void AdminWidget::refreshExamResultsTable()
 void AdminWidget::deleteExamResult(int resultId)
 {
     if (QMessageBox::question(this, "Delete Exam Result",
-            QString::fromUtf8("Supprimer ce r\xe9sultat d'examen ? Cette action est irr\xe9versible."),
+            "Delete this exam result? This action is irreversible.",
             QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         bool ok = ParkingDBManager::instance().deleteExamResult(resultId);
         if (ok) {
 
             refreshExamResultsTable();
         } else {
-            QMessageBox::critical(this, "Error", QString::fromUtf8("Impossible de supprimer le r\xe9sultat."));
+            QMessageBox::critical(this, "Error", "Unable to delete result.");
         }
     }
 }
@@ -2837,11 +2823,10 @@ QWidget* AdminWidget::createParkingStudentsPage()
     pageLayout->setSpacing(16);
 
     // Header
-    QLabel *titleLbl = new QLabel(QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f  \xc3\x89tudiants \xe2\x80\x94 Phase Parking"), page);
+    QLabel *titleLbl = new QLabel(QString::fromUtf8("\xf0\x9f\x85\xbf\xef\xb8\x8f  Students \xe2\x80\x94 Parking Phase"), page);
     titleLbl->setStyleSheet("font-size:20px;font-weight:700;color:#3b82f6;");
 
-    QLabel *subLbl = new QLabel(QString::fromUtf8(
-        "Liste des \xc3\xa9tudiants actuellement en formation parking (synchronis\xc3\xa9 Oracle)"), page);
+    QLabel *subLbl = new QLabel("List of students currently in parking training (Oracle sync)", page);
     subLbl->setStyleSheet("font-size:13px;color:#6b7280;");
 
     pageLayout->addWidget(titleLbl);
@@ -2909,8 +2894,8 @@ QWidget* AdminWidget::createParkingStudentsPage()
 
         QLabel *msg = new QLabel(
             QString::fromUtf8(
-                "Aucun \xc3\xa9tudiant en phase parking ne vous est actuellement assign\xc3\xa9.\n"
-                "Les \xc3\xa9tudiants apparaissent ici d\xc3\xa8s qu'ils atteignent l'\xc3\xa9tape 3 (Parking)."),
+                "No parking-phase students are currently assigned to you.\n"
+                "Students appear here once they reach step 3 (Parking)."),
             emptyFrame);
         msg->setAlignment(Qt::AlignCenter);
         msg->setWordWrap(true);

@@ -8,6 +8,8 @@
 #include <QFrame>
 #include <QVBoxLayout>
 #include <QProgressBar>
+#include <QResizeEvent>
+#include <QShowEvent>
 #include "wino/thememanager.h"
 #include "smartdrivewindow.h"
 #include "parking/parkingwidget.h"
@@ -32,12 +34,16 @@ class StudentLearningHub : public QMainWindow
 public:
     explicit StudentLearningHub(int studentId, QWidget *parent = nullptr);
 
+signals:
+    void logoutRequested();
+
 private slots:
     void showTheory();
     void showCircuit();
     void showSessions();
     void showParking();
-    void showAssistant();
+    void showSettings();
+    void toggleAssistant();
     void applyTheme();          // called when ThemeManager emits themeChanged
 
 private:
@@ -57,12 +63,13 @@ private:
     QFrame         *m_sidebar       = nullptr;   // kept for applyTheme()
     QPushButton    *m_activeMainBtn = nullptr;   // currently highlighted nav button
     QPushButton    *m_themeBtn      = nullptr;   // light/dark toggle in sidebar bottom
+    QPushButton    *m_settingsBtn   = nullptr;   // settings button at bottom of sidebar
+    QPushButton    *m_logoutBtn     = nullptr;   // logout button at bottom of sidebar
     QStackedWidget *m_stack;
     QPushButton    *m_theoryBtn;
     QPushButton    *m_circuitBtn;
     QPushButton    *m_sessionsBtn;
     QPushButton    *m_parkingBtn    = nullptr;
-    QPushButton    *m_assistantBtn  = nullptr;
     QLabel         *m_stepScoreLbl  = nullptr;
 
     // ── Pages (lazy-loaded) ──────────────────────────────────────────────────
@@ -70,12 +77,25 @@ private:
     QWidget              *m_circuitPage   = nullptr;
     WinoStudentDashboard *m_sessionsPage  = nullptr;
     ParkingWidget        *m_parkingPage   = nullptr;
-    WinoAssistantWidget  *m_assistantPage = nullptr;
+
+    // ── Floating assistant ────────────────────────────────────────────────────
+    QPushButton          *m_fabBtn        = nullptr;
+    QFrame               *m_chatPanel     = nullptr;
+    bool                  m_chatOpen      = false;
 
     // ── Theory sub-navigation ─────────────────────────────────────────────────
     QWidget             *m_theorySubNav   = nullptr;
     QList<QPushButton*>  m_theoryNavBtns;
     int                  m_activeTheoryIdx = 0;
+
+    // ── Circuit sub-navigation ────────────────────────────────────────────────
+    QWidget             *m_circuitSubNav  = nullptr;
+
+    // ── Sessions sub-navigation ───────────────────────────────────────────────
+    QWidget             *m_sessionsSubNav = nullptr;
+
+    // ── Parking sub-navigation ────────────────────────────────────────────────
+    QWidget             *m_parkingSubNav  = nullptr;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     void        loadStudentStep();
@@ -86,6 +106,13 @@ private:
     QPushButton* makeStepNavBtn(QWidget *parent, int stepNum,
                                 const QString &icon, const QString &label,
                                 bool locked);
+    void        createFloatingAssistant(QWidget *container);
+    void        repositionFloatingAssistant();
+    QWidget*    createSettingsPage();
+
+protected:
+    void resizeEvent(QResizeEvent *e) override;
+    void showEvent(QShowEvent *e) override;
 };
 
 #endif // STUDENTLEARNINGHUB_H
