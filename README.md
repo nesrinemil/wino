@@ -1,5 +1,5 @@
 # Driving School Management System
-## Wino - Module 2
+## Wino 
 
 A complete, modern, responsive driving school management application built with Qt C++.
 
@@ -35,7 +35,7 @@ A complete, modern, responsive driving school management application built with 
 - Manage school registrations
 
 ### 🗄️ Database Features
-- SQLite database for data persistence
+- Oracle database for data persistence
 - Automatic table creation on first run
 - Sample data included for testing
 - Supports:
@@ -49,7 +49,7 @@ A complete, modern, responsive driving school management application built with 
 ### Prerequisites
 - Qt 6.x or Qt 5.15+ with Qt Widgets and Qt SQL modules
 - C++17 compatible compiler
-- SQLite support (included with Qt)
+- Oracle support (included with Qt)
 
 ### Build Instructions
 
@@ -76,7 +76,7 @@ DrivingSchoolApp.exe
 ## Usage Guide
 
 ### First Launch
-1. The application will create a SQLite database file `driving_school.db`
+1. The application will create a Oracle database file `driving_school.db`
 2. Sample data is automatically populated
 3. Role selection screen appears
 
